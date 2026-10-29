@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Data - Demo Lab</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<main>
+  <h1>Supplier directory</h1>
+
+  <h2>Price list</h2>
+  <table id="prices"><thead><tr><th>SKU</th><th>Item</th><th>Unit price</th><th>Min order</th></tr></thead><tbody></tbody></table>
+  <nav class="pager" aria-label="Price list pages" style="display:flex;gap:6px;margin-top:8px">
+    <button class="secondary" id="prev" disabled>Previous</button><span id="pageinfo"></span><button class="secondary" id="next">Next</button>
+  </nav>
+
+  <h2>Contacts</h2>
+  <div class="grid">
+    <div class="card"><h3>Rahim Traders</h3><p>Email: sales@rahimtraders.example</p><p>Phone: +880 1711-000111</p><p>City: Dhaka</p></div>
+    <div class="card"><h3>Northwind Supply</h3><p>Email: hello@northwind.example</p><p>Phone: +1 415-555-0182</p><p>City: San Francisco</p></div>
+    <div class="card"><h3>Bayside Parts</h3><p>Email: orders@bayside.example</p><p>Phone: +44 20 7946 0958</p><p>City: London</p></div>
+  </div>
+
+  <h2>Spec sheet</h2>
+  <dl class="card">
+    <dt>Model</dt><dd>ZX-900 Pro</dd><dt>Weight</dt><dd>1.35 kg</dd><dt>Battery</dt><dd>72 Wh, up to 14 hours</dd>
+    <dt>Ports</dt><dd>2× USB-C, 1× HDMI, 1× SD card</dd><dt>Warranty</dt><dd>3 years</dd>
+  </dl>
+
+  <h2>Opening hours</h2>
+  <ul><li>Mon–Fri: 9:00–18:00</li><li>Sat: 10:00–14:00</li><li>Sun: closed</li></ul>
+</main>
+<script type="module">
+  import '/common.js';
+  // 18 rows, 6 per page.
+  const rows = Array.from({ length: 18 }, (_, i) => ({ sku: `SKU-${1001 + i}`, item: ['Bolt M6', 'Nut M6', 'Washer 6mm', 'Hinge 3in', 'Bracket L', 'Screw 4x20'][i % 6] + ` (${['steel', 'zinc', 'brass'][Math.floor(i / 6)]})`, price: (0.15 + i * 0.37).toFixed(2), min: [100, 250, 500][i % 3] }));
+  let page = 0;
+  const $ = (id) => document.getElementById(id);
+  function render() {
+    $('prices').tBodies[0].innerHTML = rows.slice(page * 6, page * 6 + 6).map((r) => `<tr><td>${r.sku}</td><td>${r.item}</td><td>$${r.price}</td><td>${r.min}</td></tr>`).join('');
+    $('pageinfo').textContent = `Page ${page + 1} of 3`;
+    $('prev').disabled = page === 0;
+    $('next').disabled = page === 2;
+  }
+  $('prev').onclick = () => { page--; render(); };
+  $('next').onclick = () => { page++; render(); };
+  render();
+</script>
+</body>
+</html>

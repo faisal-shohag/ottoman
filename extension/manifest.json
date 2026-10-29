@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Ottoman",
+  "version": "0.1.0",
+  "description": "Lets the Ottoman desktop assistant work in this browser.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArVAEtQu6JPrkd3wd6Md+I8enXM0dXrxQmlyf7sVkXGQ/lOIshOC4NIrxTta+5ZNUte08oeWF7Qa/2iwCzNvfD0Pi8BlLzj/MFzbqpEpk4sbHbVinpn3cUtHsmuSdwXE2EMSRnbbXKptL9cRq+s72B4pXhinw2vqzPNVDor+G/2BKQacqvDEz5eij+dSn9Rz2xv3KZiF9glbFU25rNocIQZP5jIdwcWaPkhsRDx9c/CPDfKRvf3ioapJvU8EZV4FonaInJTSx8rlwl4pBsc2V8GPkKQJD7AhQ3orfbH5RDe9SayNkfkFUCjBDWI+LVKU6lv2evX0HZMjnLvzLaAVitwIDAQAB",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "tabGroups",
+    "alarms"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Ottoman"
+  }
+}

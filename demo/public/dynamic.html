@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Dynamic - Demo Lab</title><link rel="stylesheet" href="/style.css">
+<style>
+  [role=tablist] button[aria-selected=true] { background: #1f2937; color: #fff; }
+  [role=tablist] button { background: #fff; color: #1f2937; }
+  .sticky-ad { position: fixed; bottom: 0; left: 0; right: 0; background: #fde68a; padding: 12px; text-align: center; z-index: 40; }
+</style></head>
+<body>
+<main>
+  <h1>Dynamic content</h1>
+
+  <h2>Delayed news (loads after 2.5s)</h2>
+  <div id="news"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+
+  <h2>Comments</h2>
+  <ul id="comments"></ul>
+  <button id="more">Load more comments</button>
+
+  <h2>Moving button</h2>
+  <p>This button re-renders and shifts after 1.5s. Click it after it settles.</p>
+  <div id="mover-wrap"><button id="mover">Claim reward</button></div>
+  <p id="mover-out"></p>
+
+  <h2>Modal</h2>
+  <button id="open-modal">Open newsletter dialog</button>
+
+  <h2>Tabs</h2>
+  <div role="tablist" aria-label="Product info">
+    <button role="tab" aria-selected="true" aria-controls="t1" id="tab1">Specs</button>
+    <button role="tab" aria-selected="false" aria-controls="t2" id="tab2">Shipping</button>
+    <button role="tab" aria-selected="false" aria-controls="t3" id="tab3">Warranty</button>
+  </div>
+  <div role="tabpanel" id="t1">Weight 1.2 kg, battery 12 hours.</div>
+  <div role="tabpanel" id="t2" hidden>Ships in 2 business days. Free over $50.</div>
+  <div role="tabpanel" id="t3" hidden>Warranty: 2 years, code WR-2Y-9931.</div>
+
+  <h2>FAQ</h2>
+  <details><summary>Can I return an item?</summary><p>Yes, within 30 days.</p></details>
+  <details><summary>Do you ship internationally?</summary><p>Yes, to 42 countries.</p></details>
+
+  <h2>Flash toast</h2>
+  <button id="flash">Get discount code</button>
+  <p>The code appears in a toast for only 3 seconds.</p>
+
+  <div style="height: 600px"></div>
+  <button id="bottom">Button near the bottom (behind the sticky bar)</button>
+  <p id="bottom-out"></p>
+  <div style="height: 40px"></div>
+</main>
+<div class="sticky-ad">Sticky promo bar covering the bottom of the page</div>
+<script type="module">
+  import { toast, submit } from '/common.js';
+  const $ = (id) => document.getElementById(id);
+  setTimeout(() => {
+    $('news').innerHTML = '<ul><li>Store opens new branch in Sylhet</li><li>Holiday sale starts Nov 20</li><li>Free shipping weekend announced</li></ul>';
+  }, 2500);
+
+  let n = 0;
+  const addComments = () => { for (let i = 0; i < 3; i++) $('comments').insertAdjacentHTML('beforeend', `<li>Comment #${++n}: great product!</li>`); if (n >= 9) $('more').remove(); };
+  addComments();
+  $('more').onclick = () => { $('more').disabled = true; $('more').textContent = 'Loading…'; setTimeout(() => { addComments(); $('more').disabled = false; $('more').textContent = 'Load more comments'; }, 1000); };
+
+  setTimeout(() => {
+    $('mover-wrap').innerHTML = '<div style="height:60px">Ad slot loaded</div><button id="mover">Claim reward</button>';
+    $('mover').onclick = () => { $('mover-out').textContent = 'Reward claimed: 500 points'; submit('reward', { claimed: true }); };
+  }, 1500);
+
+  $('open-modal').onclick = () => {
+    document.body.insertAdjacentHTML('beforeend', `<div class="modal-backdrop" id="mb"><div class="modal" role="dialog" aria-modal="true" aria-label="Newsletter">
+      <h3>Join our newsletter</h3><label for="nl">Email</label><input id="nl" type="email">
+      <p><button id="nl-ok">Subscribe</button> <button class="secondary" id="nl-x" aria-label="Close">Close</button></p></div></div>`);
+    $('nl-ok').onclick = async () => { await submit('newsletter', { email: $('nl').value }); $('mb').remove(); toast('Subscribed!'); };
+    $('nl-x').onclick = () => $('mb').remove();
+  };
+
+  document.querySelector('[role=tablist]').addEventListener('click', (e) => {
+    if (e.target.role !== 'tab') return;
+    document.querySelectorAll('[role=tab]').forEach((t) => { t.setAttribute('aria-selected', t === e.target); $(t.getAttribute('aria-controls')).hidden = t !== e.target; });
+  });
+
+  $('flash').onclick = () => toast('Your code: SAVE15-XQ7', 3000);
+  $('bottom').onclick = () => ($('bottom-out').textContent = 'Bottom button clicked');
+</script>
+</body>
+</html>

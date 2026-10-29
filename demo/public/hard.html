@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Hard cases - Demo Lab</title><link rel="stylesheet" href="/style.css">
+<style>
+  .divbtn { display: inline-block; background: #7c3aed; color: #fff; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+  .captcha { border: 1px solid #bbb; padding: 12px; width: 300px; background: #f3f4f6; }
+</style></head>
+<body>
+<main>
+  <h1>Hard cases</h1>
+
+  <h2>Canvas button</h2>
+  <p>The green "START" button is drawn on a canvas, so it has no DOM element.</p>
+  <canvas id="cv" width="400" height="120" style="border:1px solid #bbb; background:#fff"></canvas>
+  <p id="cv-out"></p>
+
+  <h2>Div pretending to be a button</h2>
+  <div class="divbtn" id="divbtn">Download report</div>
+  <p id="div-out"></p>
+
+  <h2>Native dialogs</h2>
+  <button id="alert">Show alert</button>
+  <button id="confirm">Delete my data</button>
+  <p id="dlg-out"></p>
+
+  <h2>Dashboard cards</h2>
+  <!-- Like Partner Center: a full-card link layer sits on top of the visible button. -->
+  <div class="card" style="position:relative; width:300px">
+    <h3>Store analytics</h3>
+    <p>Acquisitions, usage and health.</p>
+    <button id="analytics-btn" tabindex="-1">View Analytics</button>
+    <a href="#analytics" id="card-link" aria-label="Store analytics card" style="position:absolute; inset:0"></a>
+  </div>
+  <p id="analytics-out"></p>
+
+  <h3>Nested web components</h3>
+  <outer-panel></outer-panel>
+  <p id="shadow-out"></p>
+
+  <h3>Half under a sticky bar</h3>
+  <div style="position:relative; height:60px">
+    <div style="position:absolute; top:0; left:0; width:160px; height:26px; background:#333; color:#fff; font-size:12px; z-index:5; position:sticky">Sticky notice</div>
+    <button id="half" style="margin-top:4px">Open report</button>
+  </div>
+  <p id="half-out"></p>
+
+  <h3>Dead button</h3>
+  <button id="dead">Does nothing</button>
+
+  <h2>Pointer skills</h2>
+  <h3>Reorder (drag Cherries to the top)</h3>
+  <ul id="sortable" style="list-style:none; padding:0; width:220px">
+    <li role="listitem" class="card" style="padding:6px; margin:4px 0; cursor:grab">Apples</li>
+    <li role="listitem" class="card" style="padding:6px; margin:4px 0; cursor:grab">Bananas</li>
+    <li role="listitem" class="card" style="padding:6px; margin:4px 0; cursor:grab">Cherries</li>
+  </ul>
+  <p id="order-out"></p>
+
+  <h3>Custom slider</h3>
+  <div id="track" style="position:relative; width:300px; height:8px; background:#ddd; border-radius:4px; margin:16px 0">
+    <div id="thumb" role="slider" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0"
+      style="position:absolute; left:-8px; top:-6px; width:20px; height:20px; border-radius:50%; background:#2563eb; cursor:pointer"></div>
+  </div>
+  <p id="vol-out">Volume: 0</p>
+
+  <h3>Double-click to rename</h3>
+  <span id="rename" style="padding:4px 8px; border:1px dashed #999">Project Alpha</span>
+
+  <h3>Right-click menu</h3>
+  <div id="ctx" style="padding:16px; width:220px; background:#eef">Right-click this box</div>
+  <div id="ctx-menu" role="menu" hidden style="position:absolute; background:#fff; border:1px solid #bbb; padding:4px">
+    <button role="menuitem" id="copy-link">Copy link</button>
+  </div>
+  <p id="ctx-out"></p>
+
+  <h3>Inner scroll panel</h3>
+  <div id="panel" role="region" aria-label="Messages panel" style="height:150px; width:260px; overflow-y:auto; border:1px solid #bbb"></div>
+
+  <h2>Human check</h2>
+  <div class="captcha" role="group" aria-label="Human verification">
+    <p>Type the characters shown in the image: <img alt="distorted characters" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='36'%3E%3Ctext x='8' y='26' font-size='24' font-family='monospace' transform='rotate(-4 60 18)' fill='%23444'%3Ek7Q2x%3C/text%3E%3C/svg%3E"></p>
+    <input id="cap" aria-label="Verification characters"> <button id="cap-ok">Verify</button>
+    <p id="cap-out"></p>
+  </div>
+</main>
+<script type="module">
+  import { submit } from '/common.js';
+  const $ = (id) => document.getElementById(id);
+  const cv = $('cv'), ctx = cv.getContext('2d');
+  const btn = { x: 230, y: 30, w: 140, h: 60 };
+  ctx.fillStyle = '#ddd'; ctx.fillRect(30, 30, 140, 60);
+  ctx.fillStyle = '#16a34a'; ctx.fillRect(btn.x, btn.y, btn.w, btn.h);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 22px system-ui'; ctx.fillText('START', btn.x + 34, btn.y + 38);
+  ctx.fillStyle = '#555'; ctx.fillText('STOP', 70, 68);
+  cv.addEventListener('click', (e) => {
+    const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    const hit = x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h;
+    $('cv-out').textContent = hit ? 'Started! (canvas click hit)' : 'Missed, that was not the START button';
+    if (hit) submit('canvas', { started: true });
+  });
+  addEventListener('hashchange', () => location.hash === '#analytics' && ($('analytics-out').textContent = 'Analytics opened'));
+  customElements.define('inner-action', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML = '<button><span>Export data</span></button>';
+      this.shadowRoot.querySelector('button').onclick = () => ($('shadow-out').textContent = 'Export started');
+    }
+  });
+  customElements.define('outer-panel', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML = '<div style="padding:8px;border:1px solid #bbb"><inner-action></inner-action></div>';
+    }
+  });
+  $('half').onclick = () => ($('half-out').textContent = 'Report opened');
+
+  // Mouse-driven reordering (like dnd-kit and similar libraries), not HTML5 drag-and-drop.
+  let dragging = null;
+  $('sortable').addEventListener('mousedown', (e) => { dragging = e.target.closest('li'); });
+  addEventListener('mouseup', (e) => {
+    if (!dragging) return;
+    const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('#sortable li');
+    if (over && over !== dragging) {
+      const r = over.getBoundingClientRect();
+      over.parentNode.insertBefore(dragging, e.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+      $('order-out').textContent = 'Order: ' + [...$('sortable').children].map((li) => li.textContent).join(', ');
+    }
+    dragging = null;
+  });
+
+  let sliding = false;
+  $('thumb').addEventListener('mousedown', () => (sliding = true));
+  addEventListener('mousemove', (e) => {
+    if (!sliding || !(e.buttons & 1)) return;
+    const r = $('track').getBoundingClientRect();
+    const v = Math.round(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * 100);
+    $('thumb').style.left = `${(v / 100) * r.width - 8}px`;
+    $('thumb').setAttribute('aria-valuenow', v);
+    $('vol-out').textContent = `Volume: ${v}`;
+  });
+  addEventListener('mouseup', () => (sliding = false));
+
+  $('rename').addEventListener('dblclick', () => {
+    $('rename').outerHTML = '<input id="rename-input" aria-label="New name" value="Project Alpha">';
+  });
+
+  $('ctx').addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    Object.assign($('ctx-menu').style, { left: `${e.pageX}px`, top: `${e.pageY}px` });
+    $('ctx-menu').hidden = false;
+  });
+  $('copy-link').onclick = () => { $('ctx-out').textContent = 'Link copied'; $('ctx-menu').hidden = true; };
+
+  $('panel').innerHTML = Array.from({ length: 30 }, (_, i) => `<div style="padding:4px 8px">Row ${i + 1}</div>`).join('');
+  $('divbtn').onclick =() => { $('div-out').textContent = 'Report downloaded (report-Q3.pdf)'; submit('div-button', { clicked: true }); };
+  $('alert').onclick = () => { alert('Heads up: maintenance tonight at 23:00'); $('dlg-out').textContent = 'Alert dismissed'; };
+  $('confirm').onclick = () => { $('dlg-out').textContent = confirm('Really delete all data?') ? 'Data deleted' : 'Deletion cancelled'; };
+  $('cap-ok').onclick = () => {
+    const ok = $('cap').value.trim() === 'k7Q2x';
+    $('cap-out').textContent = ok ? 'Verified' : 'Wrong characters, try again';
+    if (ok) submit('captcha', { verified: true });
+  };
+</script>
+</body>
+</html>

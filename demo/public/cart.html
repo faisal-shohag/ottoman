@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Cart - Demo Lab</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<main>
+  <h1>Your cart</h1>
+  <div id="lines"></div>
+  <section id="checkout" hidden>
+    <h2>Checkout</h2>
+    <form id="f">
+      <label for="cname">Name on card</label><input id="cname" name="name" required>
+      <label for="cemail">Email for receipt</label><input id="cemail" name="email" type="email" required>
+      <label for="cnum">Card number</label><input id="cnum" name="card" required inputmode="numeric" placeholder="4242 4242 4242 4242">
+      <label for="cexp">Expiry</label><input id="cexp" name="exp" required placeholder="MM/YY" style="width:100px">
+      <label for="ccvc">CVC</label><input id="ccvc" name="cvc" required style="width:80px">
+      <p><button type="submit">Pay now</button></p>
+    </form>
+  </section>
+  <div id="out"></div>
+</main>
+<script type="module">
+  import { submit, formToObject } from '/common.js';
+  const all = await (await fetch('/products.json')).json();
+  const $ = (id) => document.getElementById(id);
+  const load = () => JSON.parse(localStorage.getItem('cart') ?? '[]');
+  function render() {
+    const cart = load();
+    if (!cart.length) { $('lines').innerHTML = '<p>Your cart is empty. <a href="/shop.html">Go shopping</a></p>'; $('checkout').hidden = true; return; }
+    let total = 0;
+    const rows = cart.map((l) => {
+      const p = all.find((x) => x.id === l.id);
+      total += p.price * l.qty;
+      return `<tr><td>${p.name}</td><td>$${p.price.toFixed(2)}</td><td>${l.qty}</td><td>$${(p.price * l.qty).toFixed(2)}</td><td><button class="secondary" data-remove="${l.id}">Remove</button></td></tr>`;
+    }).join('');
+    $('lines').innerHTML = `<table><tr><th>Item</th><th>Price</th><th>Qty</th><th>Subtotal</th><th></th></tr>${rows}
+      <tr><th colspan="3">Total</th><th id="total">$${total.toFixed(2)}</th><th></th></tr></table>`;
+    $('checkout').hidden = false;
+  }
+  $('lines').addEventListener('click', (e) => {
+    const id = Number(e.target.dataset.remove);
+    if (!id) return;
+    localStorage.setItem('cart', JSON.stringify(load().filter((l) => l.id !== id)));
+    render();
+  });
+  $('f').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const cart = load();
+    await submit('checkout', { ...formToObject(e.target), items: cart, total: $('total').textContent });
+    localStorage.removeItem('cart');
+    $('cart-count').textContent = 0;
+    $('lines').innerHTML = '';
+    $('checkout').hidden = true;
+    $('out').innerHTML = '<div class="result" role="status">Payment successful. Order #B2207 confirmed.</div>';
+  });
+  render();
+</script>
+</body>
+</html>

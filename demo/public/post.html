@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Post - Demo Lab</title><link rel="stylesheet" href="/style.css">
+<style>
+  .toolbar button { padding: 2px 10px; }
+  .editor { min-height: 120px; border: 1px solid #bbb; border-radius: 4px; padding: 8px; background: #fff; max-width: 600px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border: 1px solid #bbb; border-radius: 4px; padding: 4px; max-width: 600px; background: #fff; }
+  .chip { background: #e0e7ff; padding: 2px 8px; border-radius: 12px; }
+  .chip button { background: none; color: #333; border: 0; padding: 0 0 0 4px; }
+  .chips input { border: 0; flex: 1; min-width: 120px; }
+  .feed article { margin-top: 12px; }
+</style></head>
+<body>
+<main>
+  <h1>Create post</h1>
+
+  <label for="title">Title</label>
+  <input id="title" type="text" maxlength="80">
+
+  <label for="summary">Short summary (max 140)</label>
+  <textarea id="summary" rows="2" maxlength="140" style="max-width:600px"></textarea>
+  <div><span id="chars">0</span>/140</div>
+
+  <label id="body-label">Body</label>
+  <div class="toolbar" role="toolbar" aria-label="Formatting">
+    <button type="button" data-cmd="bold" aria-label="Bold"><b>B</b></button>
+    <button type="button" data-cmd="italic" aria-label="Italic"><i>I</i></button>
+    <button type="button" data-cmd="insertUnorderedList" aria-label="Bullet list">• List</button>
+  </div>
+  <div class="editor" id="body" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="body-label"></div>
+
+  <label for="tag-input">Tags (press Enter to add)</label>
+  <div class="chips" id="chips"><input id="tag-input" placeholder="Add a tag"></div>
+
+  <label for="image">Cover image</label>
+  <input id="image" type="file" accept="image/*">
+
+  <!-- Social-style attach: a button that opens a hidden file input. -->
+  <p><button type="button" class="secondary" id="attach">📎 Attach image</button> <span id="attached"></span></p>
+  <input id="attach-input" type="file" accept="image/*" hidden>
+
+  <label id="paste-label">Paste an image here</label>
+  <div class="editor" id="paste" contenteditable="true" role="textbox" aria-labelledby="paste-label" style="min-height:40px"></div>
+  <div id="pasted"></div>
+
+  <label for="visibility">Visibility</label>
+  <select id="visibility"><option>Public</option><option>Followers</option><option>Private</option></select>
+
+  <label for="when">Publish</label>
+  <select id="when"><option value="now">Now</option><option value="tomorrow">Tomorrow 9:00</option><option value="nextweek">Next week</option></select>
+
+  <p class="error" id="err" role="alert"></p>
+  <p><button class="secondary" id="draft">Save draft</button> <button id="publish">Publish</button></p>
+
+  <h2>Published posts</h2>
+  <div class="feed" id="feed"><p>No posts yet.</p></div>
+
+  <h2>Discussion</h2>
+  <article class="card">
+    <p><b>Rahim:</b> Has anyone tried the new USB-C hub?</p>
+    <!-- Social-style comment box: no form, Enter sends. -->
+    <div class="editor" id="comment" contenteditable="true" role="textbox" aria-label="Write a comment…" style="min-height:40px"></div>
+    <p><button id="reply" aria-label="Reply" title="Reply">↩</button></p>
+    <ul id="comments"></ul>
+  </article>
+</main>
+<script type="module">
+  import { submit, toast } from '/common.js';
+  const $ = (id) => document.getElementById(id);
+  const tags = [];
+  $('summary').addEventListener('input', () => ($('chars').textContent = $('summary').value.length));
+  document.querySelector('.toolbar').addEventListener('click', (e) => {
+    const cmd = e.target.closest('button')?.dataset.cmd;
+    if (cmd) { $('body').focus(); document.execCommand(cmd); }
+  });
+  function renderChips() {
+    $('chips').querySelectorAll('.chip').forEach((c) => c.remove());
+    for (const t of tags) {
+      const c = document.createElement('span');
+      c.className = 'chip';
+      c.innerHTML = `#${t}<button aria-label="Remove tag ${t}">×</button>`;
+      c.querySelector('button').onclick = () => { tags.splice(tags.indexOf(t), 1); renderChips(); };
+      $('chips').insertBefore(c, $('tag-input'));
+    }
+  }
+  $('tag-input').addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ',') && e.target.value.trim()) {
+      e.preventDefault();
+      const t = e.target.value.trim().replace(/^#/, '');
+      if (!tags.includes(t)) tags.push(t);
+      e.target.value = '';
+      renderChips();
+    }
+  });
+  $('attach').onclick = () => $('attach-input').click();
+  $('attach-input').addEventListener('change', () => ($('attached').textContent = $('attach-input').files[0]?.name ?? ''));
+  $('paste').addEventListener('paste', (e) => {
+    const item = [...e.clipboardData.items].find((i) => i.type.startsWith('image/'));
+    if (!item) return;
+    e.preventDefault();
+    const blob = item.getAsFile();
+    $('pasted').textContent = `Pasted image: ${blob.type}, ${blob.size} bytes`;
+    submit('paste', { type: blob.type, size: blob.size });
+  });
+  function collect() {
+    return { title: $('title').value, summary: $('summary').value, body: $('body').innerText.trim(), bodyHtml: $('body').innerHTML,
+      tags: [...tags], image: ($('attach-input').files[0] ?? $('image').files[0])?.name ?? null, visibility: $('visibility').value, when: $('when').value };
+  }
+  $('draft').onclick = async () => { await submit('post-draft', collect()); toast('Draft saved'); };
+  $('publish').onclick = async () => {
+    const post = collect();
+    if (!post.title || !post.body) return ($('err').textContent = 'Title and body are required.');
+    $('err').textContent = '';
+    await submit('post', post);
+    if ($('feed').querySelector('p')) $('feed').innerHTML = '';
+    $('feed').insertAdjacentHTML('afterbegin', `<article class="card"><h3></h3><div class="b"></div><small></small></article>`);
+    const a = $('feed').firstElementChild;
+    a.querySelector('h3').textContent = post.title;
+    a.querySelector('.b').innerHTML = post.bodyHtml;
+    a.querySelector('small').textContent = `${post.tags.map((t) => '#' + t).join(' ')} · ${post.visibility} · ${post.when}`;
+    toast('Post published');
+  };
+
+  async function sendComment() {
+    const text = $('comment').innerText.trim();
+    if (!text) return;
+    await submit('comment', { text });
+    $('comments').insertAdjacentHTML('beforeend', '<li></li>');
+    $('comments').lastElementChild.textContent = text;
+    $('comment').textContent = '';
+  }
+  $('comment').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendComment(); }
+  });
+  $('reply').onclick = sendComment;
+</script>
+</body>
+</html>

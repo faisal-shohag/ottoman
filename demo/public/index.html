@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Demo Lab</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<main>
+  <h1>Demo Lab</h1>
+  <p>Test pages for the browser companion. Each page covers a known automation pain point.</p>
+  <div class="grid">
+    <a class="card" href="/forms.html"><h3>Forms</h3>Every input type, validation</a>
+    <a class="card" href="/tricky-form.html"><h3>Tricky form</h3>Controlled inputs, custom widgets, shadow DOM, iframe</a>
+    <a class="card" href="/wizard.html"><h3>Wizard</h3>Multi-step order form</a>
+    <a class="card" href="/login.html"><h3>Login</h3>demo / demo, protected account page</a>
+    <a class="card" href="/shop.html"><h3>Shop</h3>Search, filter, sort, cart, checkout</a>
+    <a class="card" href="/post.html"><h3>Post</h3>Write and publish a post</a>
+    <a class="card" href="/dynamic.html"><h3>Dynamic</h3>Delayed content, modals, toasts</a>
+    <a class="card" href="/data.html"><h3>Data</h3>Tables and cards to extract</a>
+    <a class="card" href="/hard.html"><h3>Hard</h3>Canvas, dialogs, CAPTCHA</a>
+  </div>
+  <p><a href="/data.html" target="_blank">Open data page in a new tab</a></p>
+</main>
+
+<div class="modal-backdrop" id="cookie">
+  <div class="modal" role="dialog" aria-label="Cookie consent">
+    <h3>We use cookies</h3>
+    <p>This banner blocks the page until you choose.</p>
+    <button id="accept">Accept all</button> <button class="secondary" id="reject">Reject</button>
+  </div>
+</div>
+<script type="module">
+  import '/common.js';
+  const banner = document.getElementById('cookie');
+  if (localStorage.getItem('cookies')) banner.remove();
+  for (const id of ['accept', 'reject']) document.getElementById(id).onclick = () => { localStorage.setItem('cookies', id); banner.remove(); };
+</script>
+</body>
+</html>

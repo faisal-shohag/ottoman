@@ -1,0 +1,26 @@
+* { box-sizing: border-box; }
+body { font: 15px/1.5 system-ui, sans-serif; margin: 0; color: #222; background: #fafafa; }
+main { max-width: 960px; margin: 0 auto; padding: 24px 16px 80px; }
+header.site { position: sticky; top: 0; z-index: 50; display: flex; gap: 24px; align-items: center; padding: 12px 24px; background: #1f2937; color: #fff; }
+header.site a, header.site button { color: #fff; text-decoration: none; background: none; border: 0; font: inherit; cursor: pointer; margin-right: 16px; }
+header.site .brand { font-weight: 700; }
+.menu { position: relative; display: inline-block; }
+.dropdown { display: none; position: absolute; top: 100%; left: 0; background: #374151; padding: 8px; min-width: 160px; }
+.dropdown a { display: block; padding: 4px 8px; }
+.menu:hover .dropdown { display: block; }
+label { display: block; margin: 12px 0 4px; font-weight: 600; }
+input, select, textarea { font: inherit; padding: 6px 8px; border: 1px solid #bbb; border-radius: 4px; }
+input[type=text], input[type=email], input[type=password], input[type=number], input[type=tel], input[type=url], select, textarea { width: 100%; max-width: 420px; }
+button, .btn { font: inherit; padding: 8px 16px; border-radius: 4px; border: 1px solid #1f2937; background: #1f2937; color: #fff; cursor: pointer; }
+button:disabled { opacity: .4; cursor: not-allowed; }
+button.secondary { background: #fff; color: #1f2937; }
+.error { color: #b91c1c; font-size: 13px; }
+.card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 16px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+.toast { position: fixed; bottom: 24px; right: 24px; background: #111; color: #fff; padding: 12px 16px; border-radius: 6px; z-index: 100; }
+.modal-backdrop { position: fixed; inset: 0; background: #0008; display: flex; align-items: center; justify-content: center; z-index: 90; }
+.modal { background: #fff; padding: 24px; border-radius: 8px; min-width: 320px; }
+table { border-collapse: collapse; width: 100%; background: #fff; }
+th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
+.skeleton { background: linear-gradient(90deg, #eee, #ddd, #eee); height: 18px; border-radius: 4px; margin: 6px 0; }
+.result { margin-top: 16px; padding: 12px; background: #ecfdf5; border: 1px solid #10b981; border-radius: 6px; }

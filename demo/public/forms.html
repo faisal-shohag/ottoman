@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Forms - Demo Lab</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<main>
+  <h1>Contact form</h1>
+  <form id="f" novalidate>
+    <label for="name">Full name *</label>
+    <input id="name" name="name" type="text" required>
+    <div class="error" id="name-err"></div>
+
+    <label for="email">Email *</label>
+    <input id="email" name="email" type="email" required>
+    <div class="error" id="email-err"></div>
+
+    <!-- placeholder only, no label -->
+    <input name="phone" type="tel" placeholder="Phone number" style="margin-top:12px">
+
+    <input name="website" type="url" aria-label="Website" style="margin-top:12px; display:block">
+
+    <label for="password">Password (min 8)</label>
+    <input id="password" name="password" type="password" minlength="8">
+
+    <label for="age">Age</label>
+    <input id="age" name="age" type="number" min="1" max="120">
+
+    <label for="dob">Date of birth</label>
+    <input id="dob" name="dob" type="date">
+
+    <label for="time">Preferred call time</label>
+    <input id="time" name="time" type="time">
+
+    <label for="satisfaction">Satisfaction</label>
+    <input id="satisfaction" name="satisfaction" type="range" min="0" max="10" value="5">
+
+    <label for="color">Favorite color</label>
+    <input id="color" name="color" type="color" value="#3366ff">
+
+    <label for="country">Country</label>
+    <select id="country" name="country">
+      <option value="">Choose…</option>
+      <option value="bd">Bangladesh</option><option value="us">United States</option>
+      <option value="uk">United Kingdom</option><option value="in">India</option><option value="de">Germany</option>
+    </select>
+
+    <label for="interests">Interests (multi)</label>
+    <select id="interests" name="interests" multiple size="4">
+      <option>Sports</option><option>Music</option><option>Tech</option><option>Travel</option>
+    </select>
+
+    <fieldset style="margin-top:12px"><legend>Contact method</legend>
+      <label><input type="radio" name="method" value="email"> Email</label>
+      <label><input type="radio" name="method" value="phone"> Phone</label>
+      <label><input type="radio" name="method" value="none"> Don't contact me</label>
+    </fieldset>
+
+    <label for="msg">Message *</label>
+    <textarea id="msg" name="message" rows="4" required></textarea>
+
+    <label for="file">Attachment</label>
+    <input id="file" name="attachment" type="file">
+
+    <label><input type="checkbox" name="newsletter" value="yes"> Subscribe to newsletter</label>
+    <label><input type="checkbox" name="terms" value="accepted" id="terms"> I accept the terms *</label>
+
+    <p><button id="send" type="submit" disabled>Send message</button></p>
+  </form>
+  <div id="out"></div>
+</main>
+<script type="module">
+  import { submit, formToObject } from '/common.js';
+  const f = document.getElementById('f');
+  const send = document.getElementById('send');
+  const checks = {
+    name: (v) => (v.trim().length >= 2 ? '' : 'Name is required'),
+    email: (v) => (/^\S+@\S+\.\S+$/.test(v) ? '' : 'Enter a valid email'),
+  };
+  function validate(show) {
+    let ok = true;
+    for (const [k, fn] of Object.entries(checks)) {
+      const msg = fn(f[k].value);
+      if (msg) ok = false;
+      if (show) document.getElementById(`${k}-err`).textContent = msg;
+    }
+    if (!f.message.value.trim() || !f.terms.checked) ok = false;
+    send.disabled = !ok;
+    return ok;
+  }
+  f.addEventListener('input', () => validate(false));
+  f.addEventListener('change', () => validate(false));
+  f.addEventListener('focusout', () => validate(true));
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!validate(true)) return;
+    const data = formToObject(f);
+    await submit('contact', data);
+    document.getElementById('out').innerHTML = '<div class="result" role="status">Thanks! Your message was sent.</div>';
+    f.reset();
+    validate(false);
+  });
+</script>
+</body>
+</html>

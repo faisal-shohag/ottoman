@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Wizard - Demo Lab</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<main>
+  <h1>Order a custom laptop</h1>
+  <p id="progress">Step 1 of 4</p>
+
+  <section data-step="1">
+    <h2>Configuration</h2>
+    <label for="cpu">Processor</label>
+    <select id="cpu"><option value="">Choose…</option><option>Core i5</option><option>Core i7</option><option>Ryzen 7</option></select>
+    <label for="ram">Memory</label>
+    <select id="ram"><option value="">Choose…</option><option>8 GB</option><option>16 GB</option><option>32 GB</option></select>
+  </section>
+
+  <section data-step="2" hidden>
+    <h2>Shipping address</h2>
+    <label for="addr">Street address</label><input id="addr" type="text">
+    <label for="zip">Postal code</label><input id="zip" type="text" inputmode="numeric">
+    <label><input type="checkbox" id="express"> Express shipping (+$20)</label>
+  </section>
+
+  <section data-step="3" hidden>
+    <h2>Payment</h2>
+    <label for="card">Card number</label><input id="card" type="text" autocomplete="off" placeholder="4242 4242 4242 4242">
+    <label for="exp">Expiry (MM/YY)</label><input id="exp" type="text">
+  </section>
+
+  <section data-step="4" hidden>
+    <h2>Review</h2>
+    <dl id="review"></dl>
+  </section>
+
+  <p class="error" id="err"></p>
+  <p>
+    <button class="secondary" id="back" disabled>Back</button>
+    <button id="next">Next</button>
+    <button id="place" hidden>Submit order</button>
+  </p>
+  <div id="out"></div>
+</main>
+<script type="module">
+  import { submit } from '/common.js';
+  const $ = (id) => document.getElementById(id);
+  let step = 1;
+  const required = { 1: ['cpu', 'ram'], 2: ['addr', 'zip'], 3: ['card', 'exp'] };
+  function show() {
+    document.querySelectorAll('section').forEach((s) => (s.hidden = Number(s.dataset.step) !== step));
+    $('progress').textContent = `Step ${step} of 4`;
+    $('back').disabled = step === 1;
+    $('next').hidden = step === 4;
+    $('place').hidden = step !== 4;
+    if (step === 4) {
+      const rows = { Processor: $('cpu').value, Memory: $('ram').value, Address: `${$('addr').value} ${$('zip').value}`, Express: $('express').checked ? 'Yes' : 'No', Card: `•••• ${$('card').value.slice(-4)}` };
+      $('review').innerHTML = Object.entries(rows).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+    }
+  }
+  $('next').onclick = () => {
+    const missing = required[step].filter((id) => !$(id).value.trim());
+    $('err').textContent = missing.length ? `Please fill: ${missing.join(', ')}` : '';
+    if (!missing.length) { step++; show(); }
+  };
+  $('back').onclick = () => { step--; show(); };
+  $('place').onclick = async () => {
+    await submit('order', { cpu: $('cpu').value, ram: $('ram').value, addr: $('addr').value, zip: $('zip').value, express: $('express').checked, card: $('card').value, exp: $('exp').value });
+    $('out').innerHTML = '<div class="result" role="status">Order placed! Confirmation #A1042</div>';
+    $('place').disabled = true;
+  };
+</script>
+</body>
+</html>

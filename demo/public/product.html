@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Product - Demo Lab</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<main id="main"><p>Loading…</p></main>
+<script type="module">
+  import { toast } from '/common.js';
+  const id = Number(new URLSearchParams(location.search).get('id'));
+  const p = (await (await fetch('/products.json')).json()).find((x) => x.id === id);
+  const main = document.getElementById('main');
+  if (!p) main.innerHTML = '<h1>Product not found</h1>';
+  else {
+    document.title = `${p.name} - Demo Lab`;
+    main.innerHTML = `
+      <p><a href="/shop.html">← Back to shop</a></p>
+      <h1>${p.name}</h1>
+      <p>${p.description}</p>
+      <table>
+        <tr><th>Brand</th><td>${p.brand}</td></tr><tr><th>Category</th><td>${p.category}</td></tr>
+        <tr><th>Price</th><td>$${p.price.toFixed(2)}</td></tr><tr><th>Rating</th><td>${p.rating} / 5 (${p.reviews} reviews)</td></tr>
+        <tr><th>Availability</th><td>${p.stock ? `${p.stock} in stock` : 'Out of stock'}</td></tr>
+      </table>
+      <p><label for="qty">Quantity</label><input id="qty" type="number" min="1" max="${p.stock}" value="1" style="width:80px"></p>
+      <button id="add" ${p.stock ? '' : 'disabled'}>Add to cart</button>`;
+    document.getElementById('add').onclick = () => {
+      const qty = Math.max(1, Number(document.getElementById('qty').value) || 1);
+      const cart = JSON.parse(localStorage.getItem('cart') ?? '[]');
+      const line = cart.find((l) => l.id === id);
+      line ? (line.qty += qty) : cart.push({ id, qty });
+      localStorage.setItem('cart', JSON.stringify(cart));
+      document.getElementById('cart-count').textContent = cart.reduce((n, l) => n + l.qty, 0);
+      toast(`Added ${qty} × ${p.name} to cart`);
+    };
+  }
+</script>
+</body>
+</html>

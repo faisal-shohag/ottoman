@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Shop - Demo Lab</title><link rel="stylesheet" href="/style.css">
+<style>
+  .filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 16px; }
+  .filters label { margin: 0 0 4px; }
+  .product .price { font-size: 18px; font-weight: 700; }
+  .product .oos { color: #b91c1c; }
+  .pager { display: flex; gap: 6px; margin-top: 16px; }
+</style></head>
+<body>
+<main>
+  <h1>Shop</h1>
+  <form class="filters" role="search" id="filters">
+    <div><label for="q">Search</label><input id="q" type="search" placeholder="Search products"></div>
+    <div><label for="cat">Category</label><select id="cat"><option value="">All</option></select></div>
+    <div><label for="max">Max price</label><input id="max" type="number" min="0" style="width:100px"></div>
+    <div><label for="sort">Sort by</label>
+      <select id="sort"><option value="relevance">Relevance</option><option value="price-asc">Price: low to high</option><option value="price-desc">Price: high to low</option><option value="rating">Rating</option></select></div>
+    <label><input type="checkbox" id="instock"> In stock only</label>
+    <button type="submit">Search</button>
+  </form>
+  <p id="count" aria-live="polite"></p>
+  <div class="grid" id="grid"></div>
+  <nav class="pager" id="pager" aria-label="Pagination"></nav>
+  <p><a href="?view=scroll">Switch to infinite scroll</a></p>
+</main>
+<script type="module">
+  import { toast } from '/common.js';
+  const all = await (await fetch('/products.json')).json();
+  const scroll = new URLSearchParams(location.search).get('view') === 'scroll';
+  const PAGE = 12;
+  const $ = (id) => document.getElementById(id);
+  for (const c of [...new Set(all.map((p) => p.category))]) $('cat').append(new Option(c, c));
+  let page = 1, results = [];
+
+  function card(p) {
+    return `<article class="card product">
+      <h3><a href="/product.html?id=${p.id}">${p.name}</a></h3>
+      <div>${p.brand} · ${p.category}</div>
+      <div class="price">$${p.price.toFixed(2)}</div>
+      <div>★ ${p.rating} (${p.reviews} reviews)</div>
+      ${p.stock ? `<button data-add="${p.id}">Add to cart</button>` : '<div class="oos">Out of stock</div>'}
+    </article>`;
+  }
+  function apply() {
+    const q = $('q').value.toLowerCase().trim();
+    const max = parseFloat($('max').value);
+    results = all.filter((p) =>
+      (!q || `${p.name} ${p.brand} ${p.category}`.toLowerCase().includes(q)) &&
+      (!$('cat').value || p.category === $('cat').value) &&
+      (isNaN(max) || p.price <= max) &&
+      (!$('instock').checked || p.stock > 0));
+    const s = $('sort').value;
+    if (s === 'price-asc') results.sort((a, b) => a.price - b.price);
+    if (s === 'price-desc') results.sort((a, b) => b.price - a.price);
+    if (s === 'rating') results.sort((a, b) => b.rating - a.rating);
+    page = 1;
+    render();
+  }
+  function render() {
+    $('count').textContent = `${results.length} results`;
+    const shown = scroll ? results.slice(0, page * PAGE) : results.slice((page - 1) * PAGE, page * PAGE);
+    $('grid').innerHTML = shown.map(card).join('') || '<p>No products found.</p>';
+    const pages = Math.ceil(results.length / PAGE);
+    $('pager').innerHTML = scroll ? '' : Array.from({ length: pages }, (_, i) =>
+      `<button class="${i + 1 === page ? '' : 'secondary'}" data-page="${i + 1}" aria-current="${i + 1 === page}">${i + 1}</button>`).join('') +
+      (page < pages ? '<button class="secondary" data-page="next">Next</button>' : '');
+  }
+  $('filters').addEventListener('submit', (e) => { e.preventDefault(); apply(); });
+  $('pager').addEventListener('click', (e) => {
+    const p = e.target.dataset.page;
+    if (!p) return;
+    page = p === 'next' ? page + 1 : Number(p);
+    render();
+    scrollTo(0, 0);
+  });
+  $('grid').addEventListener('click', (e) => {
+    const id = Number(e.target.dataset.add);
+    if (!id) return;
+    const cart = JSON.parse(localStorage.getItem('cart') ?? '[]');
+    const line = cart.find((l) => l.id === id);
+    line ? line.qty++ : cart.push({ id, qty: 1 });
+    localStorage.setItem('cart', JSON.stringify(cart));
+    $('cart-count').textContent = cart.reduce((n, l) => n + l.qty, 0);
+    toast(`Added ${all.find((p) => p.id === id).name} to cart`);
+  });
+  if (scroll) {
+    // Infinite scroll: load next batch when near bottom, with fake latency.
+    addEventListener('scroll', () => {
+      if (innerHeight + scrollY > document.body.scrollHeight - 200 && page * PAGE < results.length) {
+        page++;
+        setTimeout(render, 500);
+      }
+    });
+  }
+  apply();
+</script>
+</body>
+</html>

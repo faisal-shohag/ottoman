@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Tricky form - Demo Lab</title><link rel="stylesheet" href="/style.css">
+<style>
+  .fake-select { width: 260px; border: 1px solid #bbb; border-radius: 4px; padding: 6px 8px; background: #fff; cursor: pointer; position: relative; }
+  .fake-options { position: absolute; left: -1px; right: -1px; top: 100%; background: #fff; border: 1px solid #bbb; display: none; z-index: 5; }
+  .fake-options.open { display: block; }
+  .fake-options div { padding: 6px 8px; }
+  .fake-options div:hover { background: #eef; }
+  .cal { display: none; grid-template-columns: repeat(7, 32px); gap: 2px; background: #fff; border: 1px solid #bbb; padding: 6px; width: max-content; }
+  .cal.open { display: grid; }
+  .cal span { text-align: center; padding: 4px; cursor: pointer; border-radius: 4px; }
+  .cal span:hover { background: #eef; }
+  [role=listbox] { list-style: none; margin: 0; padding: 0; border: 1px solid #bbb; width: 260px; background: #fff; }
+  [role=option] { padding: 4px 8px; cursor: pointer; }
+  [role=option]:hover { background: #eef; }
+  .editable { min-height: 60px; border: 1px solid #bbb; border-radius: 4px; padding: 8px; background: #fff; max-width: 420px; }
+</style></head>
+<body>
+<main>
+  <h1>Shipping profile (tricky)</h1>
+
+  <label for="ctl">Username (controlled input)</label>
+  <input id="ctl" type="text" autocomplete="off">
+  <div class="error">Value resets on blur unless real input events fire.</div>
+
+  <label>City (custom dropdown)</label>
+  <div class="fake-select" id="city" tabindex="0"><span id="city-val">Select a city</span>
+    <div class="fake-options" id="city-opts">
+      <div data-v="Dhaka">Dhaka</div><div data-v="Chittagong">Chittagong</div><div data-v="Sylhet">Sylhet</div><div data-v="Khulna">Khulna</div>
+    </div>
+  </div>
+
+  <label for="date">Delivery date (custom picker, typing disabled)</label>
+  <input id="date" type="text" readonly placeholder="Pick a date">
+  <div class="cal" id="cal" aria-label="Calendar for next month"></div>
+
+  <label for="combo">Product (type to search)</label>
+  <input id="combo" role="combobox" aria-expanded="false" aria-controls="combo-list" autocomplete="off">
+  <ul role="listbox" id="combo-list" hidden></ul>
+
+  <label>Delivery notes (rich text)</label>
+  <div class="editable" contenteditable="true" id="notes" aria-label="Delivery notes"></div>
+
+  <label>Coupon code (inside shadow DOM)</label>
+  <coupon-box></coupon-box>
+
+  <label>Gift message (inside iframe)</label>
+  <iframe id="frame" title="Gift message" style="border:1px solid #bbb; height:70px; width:440px"
+    srcdoc="<label for=g style='font:14px system-ui'>Gift message</label><br><input id=g style='width:400px;font:14px system-ui'>"></iframe>
+
+  <p><button id="save">Save profile</button></p>
+  <div id="out"></div>
+</main>
+<script type="module">
+  import { submit } from '/common.js';
+
+  // Controlled input: DOM value only "sticks" if an input event updated state.
+  const ctl = document.getElementById('ctl');
+  let username = '';
+  ctl.addEventListener('input', () => { username = ctl.value; });
+  ctl.addEventListener('blur', () => { ctl.value = username; });
+
+  // Custom dropdown, no ARIA roles at all.
+  let city = '';
+  const opts = document.getElementById('city-opts');
+  document.getElementById('city').addEventListener('click', (e) => {
+    const v = e.target.dataset?.v;
+    if (v) { city = v; document.getElementById('city-val').textContent = v; opts.classList.remove('open'); }
+    else opts.classList.toggle('open');
+  });
+
+  // Custom calendar for next month.
+  const dateInput = document.getElementById('date');
+  const cal = document.getElementById('cal');
+  const now = new Date();
+  const y = now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear();
+  const m = (now.getMonth() + 1) % 12;
+  const days = new Date(y, m + 1, 0).getDate();
+  for (let d = 1; d <= days; d++) {
+    const s = document.createElement('span');
+    s.textContent = d;
+    s.onclick = () => { dateInput.value = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`; cal.classList.remove('open'); };
+    cal.append(s);
+  }
+  dateInput.onclick = () => cal.classList.toggle('open');
+
+  // Combobox with async suggestions.
+  const products = ['Wireless Mouse', 'Wireless Keyboard', 'USB-C Hub', 'USB-C Cable', 'Laptop Stand', 'Webcam HD', 'Noise Cancelling Headphones'];
+  const combo = document.getElementById('combo');
+  const list = document.getElementById('combo-list');
+  combo.addEventListener('input', () => {
+    setTimeout(() => {
+      const q = combo.value.toLowerCase();
+      const hits = q ? products.filter((p) => p.toLowerCase().includes(q)) : [];
+      list.innerHTML = hits.map((p) => `<li role="option">${p}</li>`).join('');
+      list.hidden = !hits.length;
+      combo.setAttribute('aria-expanded', String(!!hits.length));
+    }, 300);
+  });
+  list.addEventListener('click', (e) => { if (e.target.role === 'option') { combo.value = e.target.textContent; list.hidden = true; } });
+
+  // Shadow DOM input.
+  customElements.define('coupon-box', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML = '<input aria-label="Coupon code" style="font:inherit;padding:6px 8px;border:1px solid #bbb;border-radius:4px">';
+    }
+    get value() { return this.shadowRoot.querySelector('input').value; }
+  });
+
+  document.getElementById('save').onclick = async () => {
+    const data = {
+      username,
+      city,
+      date: dateInput.value,
+      product: combo.value,
+      notes: document.getElementById('notes').innerText.trim(),
+      coupon: document.querySelector('coupon-box').value,
+      gift: document.getElementById('frame').contentDocument.getElementById('g').value,
+    };
+    await submit('tricky', data);
+    document.getElementById('out').innerHTML = `<div class="result" role="status">Saved: ${Object.values(data).filter(Boolean).length}/7 fields filled</div>`;
+  };
+</script>
+</body>
+</html>
