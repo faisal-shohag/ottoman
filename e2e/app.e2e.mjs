@@ -62,10 +62,15 @@ const transcript = () => evaluate(`[...document.querySelectorAll('.entry')].map(
 const entryCount = () => evaluate(`document.querySelectorAll('.entry').length`);
 const log = () => fetch(`${DEMO}/api/log`).then((r) => r.json());
 
+// Typing happens in the chat sheet; open it first if it is closed.
 async function ask(text) {
-  await evaluate(`document.querySelector('footer input').focus()`);
+  if (!(await evaluate(`!!document.querySelector('input[aria-label=Message]')`))) {
+    await evaluate(`document.querySelector('[aria-label="Open chat"]').click()`);
+    await until('chat input', () => evaluate(`!!document.querySelector('input[aria-label=Message]')`), 5000, 100);
+  }
+  await evaluate(`document.querySelector('input[aria-label=Message]').focus()`);
   await send('Input.insertText', { text });
-  await evaluate(`[...document.querySelectorAll('footer button')].find((b) => b.textContent === 'Send').click()`);
+  await evaluate(`[...document.querySelectorAll('button')].find((b) => b.textContent === 'Send').click()`);
 }
 
 /**
@@ -80,7 +85,7 @@ async function scenario(name, request, check, { approve = true, timeoutMs = 2400
   await ask(request);
   try {
     await until(name, async () => {
-      const prompt = await evaluate(`document.querySelector('.approval p')?.textContent ?? null`);
+      const prompt = await evaluate(`document.querySelector('.approval [data-slot=card-title]')?.textContent ?? null`);
       if (prompt) {
         approvals++;
         console.log(`  approval asked: "${prompt}" -> ${approve ? 'yes' : 'no'}`);
@@ -117,10 +122,11 @@ try {
   const switchVoice = async (voice) => {
     await evaluate(`document.querySelector('[aria-label=Settings]').click()`);
     await until('settings panel', () => evaluate(`!!document.querySelector('#voice')`), 5000, 200);
-    // React listens for the native value setter + change event.
-    await evaluate(`(() => { const s = document.querySelector('#voice');
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, ${JSON.stringify(voice)});
-      s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    // Radix Select opens on a mouse pointerdown and picks an option on click.
+    await evaluate(`document.querySelector('#voice').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))`);
+    const pick = `[...document.querySelectorAll('[role=option]')].find((o) => o.textContent.startsWith(${JSON.stringify(voice + ':')}))`;
+    await until('voice option', () => evaluate(`!!${pick}`), 5000, 200);
+    await evaluate(`${pick}.click()`);
     await evaluate(`document.querySelector('[aria-label=Settings]').click()`);
   };
 

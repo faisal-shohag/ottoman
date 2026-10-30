@@ -54,6 +54,22 @@ describe('formatTree', () => {
     expect(formatTree(nodes, new Map(), 10)).toEqual(['[1] textbox "Notes"']);
   });
 
+  it('lists an open menu first, even past the line cap', () => {
+    const buttons = Array.from({ length: 10 }, (_, i) => node(String(i + 2), 'button', `Post ${i}`, { parentId: '1' }));
+    const nodes = [
+      node('1', 'RootWebArea', '', { childIds: [...buttons.map((b) => b.nodeId), '20'] }),
+      ...buttons,
+      node('20', 'menu', '', { parentId: '1', childIds: ['21'] }),
+      node('21', 'menuitemradio', 'New posts', { parentId: '20' }),
+    ];
+    const refs = new Map<number, number>();
+    const lines = formatTree(nodes, refs, 3);
+    expect(lines.slice(0, 3)).toEqual(['Open menu/dialog:', '[1] menuitemradio "New posts"', 'Page:']);
+    expect(lines.filter((l) => l.includes('New posts'))).toHaveLength(1);
+    expect(lines[lines.length - 1]).toMatch(/^… 7 more elements/);
+    expect(refs.get(1)).toBe(210);
+  });
+
   it('continues numbering across frames', () => {
     const refs = new Map<number, number>([[1, 999]]);
     expect(formatTree([node('1', 'link', 'Home')], refs, 10)).toEqual(['[2] link "Home"']);

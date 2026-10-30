@@ -1,20 +1,35 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Browser } from './cdp';
 import { Assistant, type Settings } from './live';
 import { DEFAULT_MODEL, FALLBACK_MODELS, listLiveModels, type LiveModel } from './models';
 import { tauriSocket } from './tauriSocket';
 import { createTools } from './tools';
+import { spokenWords, useVoiceState } from './voiceState';
+import { AnimatePresence, motion } from 'motion/react';
+import { OttomanMark } from '@/components/ottoman-mark';
+import { VoiceWave } from '@/components/voice-wave';
+import { Blob } from '@/components/blob';
+import { ChatSheet, stepLabel, type Entry } from '@/components/chat-sheet';
 import { DEFAULT_VOICE, VOICES } from './voices';
-
-interface Entry {
-  role: 'user' | 'assistant' | 'tool';
-  text: string;
-  open: boolean; // still receiving transcript chunks
-}
+import { Eraser, MessageSquareText, Mic, Settings as SettingsIcon, Square } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 
 const SETTINGS_KEY = 'ottoman.settings';
+const statusTone = (s: string) =>
+  /error|refused|failed|missing|not found|disconnected|declined/i.test(s)
+    ? 'bg-destructive'
+    : /connecting|starting|switched/i.test(s)
+      ? 'bg-amber-500 motion-safe:animate-pulse'
+      : /ready|connected|listening|fresh/i.test(s)
+        ? 'bg-emerald-500'
+        : 'bg-muted-foreground';
 const EXAMPLES = ['Find me a wireless mouse under $30', 'Take a screenshot of my desktop and copy it', 'What tabs do I have open?'];
 
 // Storage can be unavailable or hold stale data; settings then fall back to defaults.
@@ -44,9 +59,12 @@ export default function App() {
   const [models, setModels] = useState<LiveModel[]>(FALLBACK_MODELS);
   const [showSettings, setShowSettings] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
+  const [chatOpen, setChatOpen] = useState(false);
+  const [seen, setSeen] = useState(0); // replies already seen in the chat sheet, for the unread dot
   const assistant = useRef<Assistant>(null);
   const showCursor = useRef(true); // read by the browser tools on every action
-  const bottom = useRef<HTMLDivElement>(null);
+  const tools = useRef<ReturnType<typeof createTools>>(null);
+  const turnAudio = useRef(0); // speaker mark at the start of the current turn, for pacing the caption
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -169,6 +187,8 @@ export default function App() {
           await b.ensureWindow();
           return b;
         };
+        // Dev only: lets test scripts read the agent's tab to check what an action really did.
+        if (import.meta.env.DEV) Object.assign(window, { __ottoman: { getBrowser } });
         let a!: Assistant;
         const run = createTools({
           getBrowser,
@@ -181,6 +201,7 @@ export default function App() {
           copyFile: (file) => invoke('copy_file_to_clipboard', { file }),
           showCursor: () => showCursor.current,
         });
+        tools.current = run;
         const initial = loadSettings(config.model || DEFAULT_MODEL);
         setSettings(initial);
         setNameDraft(initial.userName);
@@ -190,13 +211,21 @@ export default function App() {
           setModels(list.some((m) => m.id === initial.model) ? list : [{ id: initial.model, name: initial.model }, ...list]),
         );
         a = new Assistant(config.api_key, initial, run, {
-          transcript: push,
+          transcript: (role, text) => {
+            if (role === 'user') {
+              run.reset();
+              turnAudio.current = a.audio().speaker.mark(); // the reply's speech starts after this
+            }
+            push(role, text);
+          },
           turnEnd: () => setEntries((list) => list.map((e) => ({ ...e, open: false }))),
           tool: (name, args, result) => {
             // Refused clicks and no-op actions come back as output, not errors; show them as failures too.
             const first = String(result.output ?? '').split('\n')[0];
             const problem = result.error ?? (/^(Not clicked|Not done|User declined)|NOTHING CHANGED/.test(first) ? first : '');
-            push('tool', `${name}(${args && Object.keys(args).length ? JSON.stringify(args) : ''})${problem ? ` ✗ ${problem}` : ''}`);
+            const text = `${name}(${args && Object.keys(args).length ? JSON.stringify(args) : ''})${problem ? ` ✗ ${problem}` : ''}`;
+            const tool = { name, args, problem: String(problem), summary: first };
+            setEntries((list) => [...list.map((e) => ({ ...e, open: false })), { role: 'tool', text, open: false, tool }]);
           },
           status: setStatus,
           approval: setApproval,
@@ -216,10 +245,43 @@ export default function App() {
     };
   }, []);
 
-  // Braces matter: scrollIntoView returns a Promise in current Chromium, and React would call it as cleanup.
+  // Waiting on Ottoman: the last row is the user's message or a step, with no reply yet.
+  const last = entries[entries.length - 1];
+  const busy = !!last && (last.role === 'user' || !!last.tool) && !approval;
+
+  // What Ottoman is doing drives the blob, the live mark, the wave and the status line.
+  const voice = useVoiceState(assistant.current, micOn, busy);
+  const audio = assistant.current?.audio();
+  const hearing = voice === 'listening' ? audio?.mic : audio?.speaker;
+  const level = () => hearing?.level() ?? 0;
+  const stageStatus = approval
+    ? 'Waiting for your OK'
+    : {
+        idle: entries.length ? 'Tap the mic to talk' : 'Tap the mic and tell me what to do',
+        listening: 'Ottoman is listening…',
+        speaking: 'Ottoman is speaking…',
+        working: last?.tool ? `Working · ${stepLabel(last)}` : 'Thinking…',
+      }[voice];
+  // The caption shows the latest words said, by either side: your request while Ottoman works, then its reply.
+  const said = [...entries].reverse().find((e) => e.role !== 'tool');
+  const captionText = said?.text ?? `Hi${settings?.userName ? ` ${settings.userName.split(' ')[0]}` : ''}, I'm Ottoman.`;
+
+  const replies = entries.filter((e) => e.role === 'assistant').length;
+  const unread = !chatOpen && replies > seen;
+  const closeChat = useCallback(() => setChatOpen(false), []);
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: 'end' });
-  }, [entries, approval]);
+    if (chatOpen) setSeen(replies);
+  }, [chatOpen, replies]);
+  // An approval must not hide behind the chat sheet.
+  useEffect(() => {
+    if (approval) setChatOpen(false);
+  }, [approval]);
+
+  const stop = () => {
+    tools.current?.stop();
+    assistant.current?.stop();
+    setStatus('Stopped. What next?');
+  };
 
   const send = () => {
     const t = text.trim();
@@ -238,20 +300,26 @@ export default function App() {
 
   useEffect(() => {
     if (!showSettings) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setShowSettings(false);
+    // Radix marks the Escape that closes an open dropdown as handled; only a free Escape closes the panel.
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !e.defaultPrevented && setShowSettings(false);
     addEventListener('keydown', onKey);
     return () => removeEventListener('keydown', onKey);
   }, [showSettings]);
 
   return (
-    <div className="app">
-      <header>
-        <strong>Ottoman</strong>
-        <span className="status" role="status">{status}</span>
-        <button
-          className="icon secondary"
+    <div className="relative flex h-screen flex-col overflow-hidden bg-[radial-gradient(ellipse_at_50%_38%,color-mix(in_oklch,var(--primary)_16%,transparent),transparent_62%)]">
+      <header className="relative z-20 flex items-center gap-2 px-3.5 pt-3 pb-1">
+        <strong className="font-semibold tracking-tight">Ottoman</strong>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          <span className={`size-2 shrink-0 rounded-full transition-colors ${statusTone(status)}`} aria-hidden />
+          <span className="status min-w-0 truncate text-xs text-muted-foreground" role="status" title={status}>{status}</span>
+        </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-full"
           aria-label="Clear session"
-          title="Clear session: new conversation"
+          title="New conversation"
           disabled={!settings}
           onClick={() => {
             setEntries([]);
@@ -259,43 +327,59 @@ export default function App() {
             assistant.current?.clear().catch((e) => setStatus(e.message));
           }}
         >
-          🧹
-        </button>
-        <button
-          className="icon secondary"
+          <Eraser />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-full"
           aria-label="Settings"
           aria-expanded={showSettings}
           aria-controls="settings"
           disabled={!settings}
           onClick={() => setShowSettings((v) => !v)}
         >
-          ⚙
-        </button>
+          <SettingsIcon />
+        </Button>
       </header>
 
       {showSettings && settings && (
-        <section className="settings" id="settings" aria-label="Settings">
-          <label htmlFor="model">Model</label>
-          <select id="model" value={settings.model} onChange={(e) => apply({ ...settings, model: e.target.value })}>
-            {models.map((m) => (
-              <option key={m.id} value={m.id} title={m.id}>{m.name}</option>
-            ))}
-          </select>
-
-          <label htmlFor="voice">Voice</label>
-          <div className="row">
-            <select id="voice" value={settings.voice} onChange={(e) => apply({ ...settings, voice: e.target.value })}>
-              {VOICES.map((v) => (
-                <option key={v.name} value={v.name}>{v.name}: {v.style}</option>
+        <section
+          className="absolute inset-x-0 top-12 z-30 flex flex-col gap-1.5 rounded-b-2xl border-b bg-card px-3.5 py-3 shadow-2xl motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-200"
+          id="settings"
+          aria-label="Settings"
+        >
+          <Label htmlFor="model" className="mt-1.5">Model</Label>
+          <Select value={settings.model} onValueChange={(model) => apply({ ...settings, model })}>
+            <SelectTrigger id="model" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {models.map((m) => (
+                <SelectItem key={m.id} value={m.id} title={m.id}>{m.name}</SelectItem>
               ))}
-            </select>
-            <button className="secondary" onClick={() => assistant.current?.testVoice().catch((e) => setStatus(e.message))}>
+            </SelectContent>
+          </Select>
+
+          <Label htmlFor="voice" className="mt-1.5">Voice</Label>
+          <div className="flex gap-2">
+            <Select value={settings.voice} onValueChange={(voice) => apply({ ...settings, voice })}>
+              <SelectTrigger id="voice" className="min-w-0 flex-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {VOICES.map((v) => (
+                  <SelectItem key={v.name} value={v.name}>{v.name}: {v.style}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button variant="outline" onClick={() => assistant.current?.testVoice().catch((e) => setStatus(e.message))}>
               Try voice
-            </button>
+            </Button>
           </div>
 
-          <label htmlFor="username">Your name (optional)</label>
-          <input
+          <Label htmlFor="username" className="mt-1.5">Your name (optional)</Label>
+          <Input
             id="username"
             value={nameDraft}
             placeholder="What should I call you?"
@@ -303,78 +387,186 @@ export default function App() {
             onBlur={() => nameDraft.trim() !== settings.userName && apply({ ...settings, userName: nameDraft.trim() })}
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
           />
-          <small>Changing model, voice or name starts a fresh conversation.</small>
+          <small className="mt-1 text-xs text-muted-foreground">Changing model, voice or name starts a fresh conversation.</small>
 
-          <label className="check">
-            <input
-              type="checkbox"
+          <div className="mt-2 flex items-center gap-2">
+            <Switch
+              id="show-cursor"
               checked={settings.showCursor}
-              onChange={(e) => {
+              onCheckedChange={(checked) => {
                 // Visual only: applies to the next action, no new conversation.
-                const next = { ...settings, showCursor: e.target.checked };
+                const next = { ...settings, showCursor: checked };
                 showCursor.current = next.showCursor;
                 setSettings(next);
                 saveSettings(next);
               }}
             />
-            Show Ottoman's cursor in the page
-          </label>
+            <Label htmlFor="show-cursor" className="font-normal">Show Ottoman's cursor in the page</Label>
+          </div>
         </section>
       )}
 
-      <main className="log">
-        {!entries.length && (
-          <div className="welcome">
-            <h2>Hi{settings?.userName ? `, ${settings.userName}` : ''}! I'm Ottoman 👋</h2>
-            <p>I can browse, fill forms, shop, post and grab screenshots for you. I'll always ask before paying, posting or sending anything.</p>
-            <p>Press the mic (or Ctrl+Shift+Space) and talk, or try one of these:</p>
-            <div className="chips">
-              {EXAMPLES.map((ex) => (
-                <button key={ex} className="chip" onClick={() => (setText(ex), input.current?.focus())}>
-                  {ex}
-                </button>
-              ))}
-            </div>
+      <main className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6">
+        <div className="relative grid aspect-square w-full max-w-[min(300px,42vh)] shrink-0 place-items-center">
+          {/* Bigger than its box, so the glow fades out before the canvas edge instead of being cut off. */}
+          <div className="pointer-events-none absolute -inset-[25%]">
+            <Blob state={voice} level={level} className="size-full" />
+          </div>
+          <OttomanMark state={voice} size={84} level={level} mono />
+        </div>
+
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.p
+            key={stageStatus}
+            className="max-w-full truncate text-xs font-medium text-muted-foreground"
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.18 }}
+          >
+            {stageStatus}
+          </motion.p>
+        </AnimatePresence>
+
+        {approval ? (
+          <Card
+            className="approval w-full shrink-0 ring-2 ring-destructive motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-200"
+            role="alertdialog"
+            aria-label="Approve action"
+          >
+            <CardHeader>
+              <CardDescription>Approve this action?</CardDescription>
+              <CardTitle>{approval}</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <Button onClick={() => assistant.current?.resolveApproval(true)}>Yes, do it</Button>
+                <Button variant="outline" onClick={() => assistant.current?.resolveApproval(false)}>No</Button>
+              </div>
+              <small className="text-xs text-muted-foreground">You can also say "yes" or "no".</small>
+            </CardContent>
+          </Card>
+        ) : (
+          <Caption
+            text={captionText}
+            heard={said?.role === 'assistant' ? () => audio?.speaker.progress(turnAudio.current) ?? null : undefined}
+            streaming={!!said?.open}
+          />
+        )}
+
+        {!entries.length && !approval && (
+          <div className="flex flex-wrap justify-center gap-1.5">
+            {EXAMPLES.map((ex) => (
+              <Button
+                key={ex}
+                variant="outline"
+                size="sm"
+                className="h-auto rounded-full bg-background/40 py-1.5 font-normal whitespace-normal backdrop-blur"
+                disabled={!assistant.current}
+                onClick={() => assistant.current?.sendText(ex).catch((e) => setStatus(e.message))}
+              >
+                {ex}
+              </Button>
+            ))}
           </div>
         )}
-        {entries.map((e, i) => (
-          <div key={i} className={`entry ${e.role}`}>{e.text}</div>
-        ))}
-        {approval && (
-          <div className="approval" role="alertdialog" aria-label="Approve action">
-            <div>Approve this action?</div>
-            <p>{approval}</p>
-            <div className="row">
-              <button onClick={() => assistant.current?.resolveApproval(true)}>Yes, do it</button>
-              <button className="secondary" onClick={() => assistant.current?.resolveApproval(false)}>No</button>
-            </div>
-            <small>You can also say "yes" or "no".</small>
-          </div>
-        )}
-        <div ref={bottom} />
       </main>
 
-      <footer>
-        <button
-          className={`mic ${micOn ? 'on' : ''}`}
+      <div className="px-8">
+        <VoiceWave state={voice} source={hearing} className="h-10" />
+      </div>
+
+      <footer className="relative z-10 flex items-center justify-center gap-7 pt-3 pb-6">
+        <Button
+          variant="outline"
+          className="size-12 rounded-full bg-background/40 backdrop-blur"
+          aria-label="Stop"
+          title="Stop Ottoman"
+          disabled={voice === 'idle' && !approval}
+          onClick={stop}
+        >
+          <Square className="size-4 fill-current" />
+        </Button>
+        <Button
+          className={`size-16 rounded-full text-white shadow-lg shadow-emerald-950/50 transition-[background,transform] active:scale-95 [&_svg:not([class*='size-'])]:size-6 ${
+            micOn ? 'mic-ring bg-destructive hover:bg-destructive/90' : 'bg-[linear-gradient(135deg,#0f766e,#10b981_55%,#2dd4bf)] hover:brightness-110'
+          }`}
           aria-pressed={micOn}
           aria-label={micOn ? 'Stop listening' : 'Start listening'}
           title="Ctrl+Shift+Space"
           disabled={!assistant.current}
           onClick={() => assistant.current?.toggleMic().catch((e) => setStatus(e.message))}
         >
-          {micOn ? '■' : '🎤'}
-        </button>
-        <input
-          ref={input}
-          value={text}
-          placeholder="Ask me anything…"
-          aria-label="Message"
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && send()}
-        />
-        <button onClick={send} disabled={!text.trim()}>Send</button>
+          <Mic />
+        </Button>
+        <Button
+          variant="outline"
+          className="relative size-12 rounded-full bg-background/40 backdrop-blur"
+          aria-label="Open chat"
+          title="Conversation and typing"
+          onClick={() => setChatOpen(true)}
+        >
+          <MessageSquareText />
+          {unread && <span className="absolute top-2 right-2 size-2 rounded-full bg-primary ring-2 ring-background" aria-label="New messages" />}
+        </Button>
       </footer>
+
+      <ChatSheet
+        open={chatOpen}
+        onClose={closeChat}
+        entries={entries}
+        busy={busy}
+        voice={voice}
+        level={level}
+        wave={hearing}
+        text={text}
+        setText={setText}
+        send={send}
+        input={input}
+      />
+    </div>
+  );
+}
+
+/**
+ * The words being spoken, large under the blob. For Ottoman's replies, words appear as they are actually heard
+ * (`heard` is the share of the reply's audio played so far); the newest words are bright and earlier ones fade.
+ * Older lines slide out of a soft top mask, and each new word fades in from a slight blur.
+ */
+function Caption({ text, heard, streaming }: { text: string; heard?: () => number | null; streaming: boolean }) {
+  const all = text.split(/\s+/).filter(Boolean);
+  const [count, setCount] = useState(all.length);
+  const live = useRef({ heard, streaming, total: all.length });
+  live.current = { heard, streaming, total: all.length };
+  const pacing = !!heard;
+  useEffect(() => {
+    if (!pacing) return;
+    let frame = 0;
+    const tick = () => {
+      const { heard, streaming, total } = live.current;
+      setCount(spokenWords(total, heard?.() ?? null, streaming));
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [pacing]);
+  const words = all.slice(0, pacing ? count : all.length).slice(-48);
+  const bright = words.length - 8;
+  return (
+    <div className="flex max-h-[7.2em] w-full shrink-0 flex-col justify-end overflow-hidden text-center text-xl leading-snug font-medium tracking-tight [mask-image:linear-gradient(to_bottom,transparent,black_35%)]">
+      <p>
+        {words.map((w, i) => (
+          <motion.span
+            key={`${i}-${w}`}
+            className={`inline-block transition-colors duration-700 ${i >= bright ? 'text-foreground' : 'text-foreground/35'}`}
+            initial={{ opacity: 0, filter: 'blur(6px)', y: 4 }}
+            animate={{ opacity: 1, filter: 'blur(0px)', y: 0 }}
+            transition={{ duration: 0.35, ease: 'easeOut' }}
+          >
+            {w}&nbsp;
+          </motion.span>
+        ))}
+      </p>
     </div>
   );
 }

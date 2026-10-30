@@ -30,16 +30,16 @@ const ENSURE_OVERLAY = `function () {
   const root = host.attachShadow({ mode: 'closed' });
   root.innerHTML = \`<style>
     .cur { position: fixed; left: 0; top: 0; width: 24px; height: 24px; transform: translate(-100px, -100px); filter: drop-shadow(0 1px 2px #0007); }
-    .rip { position: fixed; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; border: 3px solid #2563eb; opacity: 0; }
+    .rip { position: fixed; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%; border: 3px solid #0F766E; opacity: 0; }
     .rip.go { animation: rip .45s ease-out; }
     @keyframes rip { from { transform: scale(.3); opacity: 1; } to { transform: scale(1.7); opacity: 0; } }
-    .hl { position: fixed; border: 2px solid #2563eb; border-radius: 6px; background: #2563eb14; opacity: 0; transition: opacity .2s; }
-    .glow { position: fixed; inset: 0; box-shadow: inset 0 0 0 3px #2563eb99, inset 0 0 28px #2563eb55; opacity: 0; transition: opacity .3s; }
-    .pill { position: fixed; right: 12px; bottom: 12px; background: #1e3a8a; color: #fff; font: 600 12px system-ui, sans-serif; padding: 6px 12px; border-radius: 14px; opacity: 0; transition: opacity .3s; }
+    .hl { position: fixed; border: 2px solid #0F766E; border-radius: 6px; background: #0F766E14; opacity: 0; transition: opacity .2s; }
+    .glow { position: fixed; inset: 0; box-shadow: inset 0 0 0 3px #0F766E99, inset 0 0 28px #0F766E55; opacity: 0; transition: opacity .3s; }
+    .pill { position: fixed; right: 12px; bottom: 12px; background: #134E4A; color: #fff; font: 600 12px system-ui, sans-serif; padding: 6px 12px; border-radius: 14px; opacity: 0; transition: opacity .3s; }
     .on { opacity: 1; }
   </style>
   <div class="glow"></div><div class="hl"></div><div class="rip"></div>
-  <svg class="cur" viewBox="0 0 24 24"><path d="M4 2 L4 19 L8.5 14.5 L11.5 21 L14 20 L11 13.5 L17.5 13.5 Z" fill="#2563eb" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
+  <svg class="cur" viewBox="0 0 24 24"><path d="M4 2 L4 19 L8.5 14.5 L11.5 21 L14 20 L11 13.5 L17.5 13.5 Z" fill="#0F766E" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
   <div class="pill">Ottoman is working…</div>\`;
   (document.body || document.documentElement).appendChild(host);
   const $ = (s) => root.querySelector(s);

@@ -1,5 +1,5 @@
 // Gemini Live session: streams mic audio and text in, plays audio out, and runs tool calls.
-import { GoogleGenAI, Modality, ThinkingLevel, type LiveServerMessage, type Session } from '@google/genai';
+import { GoogleGenAI, MediaResolution, Modality, ThinkingLevel, type LiveServerMessage, type Session } from '@google/genai';
 import { Mic, Speaker } from './audio';
 import { buildInstruction } from './prompt';
 import { declarations } from './tools';
@@ -42,6 +42,8 @@ export class Assistant {
   private mic = new Mic();
   private speaker = new Speaker();
   private approval?: { resolve: (ok: boolean) => void; heard: string };
+  private images: { data: string; mimeType: string }[] = []; // shown by the tool call running now
+  private muted = false; // set by stop(): the rest of the current reply is not played
 
   constructor(
     apiKey: string,
@@ -77,6 +79,8 @@ export class Assistant {
       model: this.settings.model,
       config: {
         responseModalities: [Modality.AUDIO],
+        // Screenshots arrive as video frames; the default low resolution is too coarse to read or point at page details.
+        mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH,
         systemInstruction: buildInstruction(this.settings.userName),
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.settings.voice } } },
         // Extended-thinking Live models refuse to start without a thinking level; MEDIUM keeps voice replies snappy.
@@ -148,12 +152,13 @@ export class Assistant {
     const c = m.serverContent;
     if (c?.interrupted) this.speaker.flush();
     if (c?.inputTranscription?.text) {
+      this.muted = false; // the user speaks: a new turn may be heard again
       this.on.transcript('user', c.inputTranscription.text);
       this.checkSpokenApproval(c.inputTranscription.text);
     }
-    if (c?.outputTranscription?.text) this.on.transcript('assistant', c.outputTranscription.text);
+    if (!this.muted && c?.outputTranscription?.text) this.on.transcript('assistant', c.outputTranscription.text);
     for (const part of c?.modelTurn?.parts ?? []) {
-      if (part.inlineData?.data && part.inlineData.mimeType?.startsWith('audio/')) void this.speaker.play(part.inlineData.data);
+      if (!this.muted && part.inlineData?.data && part.inlineData.mimeType?.startsWith('audio/')) void this.speaker.play(part.inlineData.data);
     }
     if (c?.turnComplete) this.on.turnEnd();
 
@@ -167,14 +172,16 @@ export class Assistant {
         if (fc.id && this.cancelled.delete(fc.id)) continue; // the user interrupted; don't act on it
         const response = await this.runTool(fc.name!, fc.args);
         this.on.tool(fc.name!, fc.args, response);
+        const parts = this.images.splice(0).map((inlineData) => ({ inlineData }));
         if (fc.id && this.cancelled.delete(fc.id)) continue; // cancelled while it ran
-        functionResponses.push({ id: fc.id, name: fc.name, response });
+        functionResponses.push({ id: fc.id, name: fc.name, response, ...(parts.length && { parts }) });
       }
       if (gen === this.gen && functionResponses.length) this.session?.sendToolResponse({ functionResponses });
     }
   }
 
   async sendText(text: string) {
+    this.muted = false;
     await this.connect();
     this.on.transcript('user', text);
     this.on.turnEnd();
@@ -208,8 +215,24 @@ export class Assistant {
     this.session?.sendRealtimeInput({ text: 'Say a short, friendly one-sentence hello so I can hear your voice.' });
   }
 
+  /**
+   * Shows an image to the model. Tools call this; the image rides in that tool's response, so the model sees it
+   * together with the result. Sent as a separate video frame it arrived too late and too coarse to point at.
+   */
+  /** Stop button: silences Ottoman mid-sentence and declines a pending approval. The tools refuse further work separately. */
+  stop() {
+    this.muted = true;
+    this.speaker.flush();
+    this.resolveApproval(false);
+  }
+
+  /** Mic and speaker, read by the UI for the voice wave and talking animation. */
+  audio() {
+    return { mic: this.mic, speaker: this.speaker };
+  }
+
   sendImage(base64: string, mimeType: string) {
-    this.session?.sendRealtimeInput({ video: { data: base64, mimeType } });
+    this.images.push({ data: base64, mimeType });
   }
 
   async toggleMic() {
