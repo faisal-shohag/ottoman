@@ -51,7 +51,7 @@ export const declarations: FunctionDeclaration[] = [
   { name: 'hover', description: 'Move the pointer over an element and rest there, to open hover menus, dropdowns or tooltips. Returns the updated snapshot.', parametersJsonSchema: obj({ ref }, ['ref']) },
   {
     name: 'drag',
-    description: 'Press, drag and release: sliders, reordering lists, drop zones. Use from_ref with to_ref (drop onto an element) or with dx/dy (move by pixels, e.g. a slider thumb), or screenshot coordinates from_x, from_y, to_x, to_y.',
+    description: 'Press, drag and release: sliders, reordering lists, drop zones. Use from_ref with to_ref (drop onto an element) or with dx/dy (move by pixels, e.g. a slider thumb), or screenshot points from_x, from_y, to_x, to_y on the same 0-1000 grid as click_at.',
     parametersJsonSchema: obj({
       from_ref: ref, to_ref: ref,
       dx: { type: 'number' }, dy: { type: 'number' },
@@ -69,7 +69,7 @@ export const declarations: FunctionDeclaration[] = [
   { name: 'wait', description: 'Wait until text appears on the page, or for a number of seconds.', parametersJsonSchema: obj({ text: { type: 'string' }, seconds: { type: 'number' } }) },
   { name: 'read_page', description: 'Get the visible text of the whole page, for reading or extracting information.', parametersJsonSchema: obj({}) },
   { name: 'screenshot', description: 'See the page as an image. Use when the snapshot is missing something visual (canvas, images, charts).', parametersJsonSchema: obj({}) },
-  { name: 'click_at', description: 'Click at pixel coordinates of the latest screenshot. Only for things not in the snapshot.', parametersJsonSchema: obj({ x: { type: 'number' }, y: { type: 'number' } }, ['x', 'y']) },
+  { name: 'click_at', description: 'Click a point of the latest screenshot, given on a 0-1000 grid: x from 0 (left edge) to 1000 (right edge), y from 0 (top) to 1000 (bottom). Only for things not in the snapshot.', parametersJsonSchema: obj({ x: { type: 'number' }, y: { type: 'number' } }, ['x', 'y']) },
   {
     name: 'take_screenshot',
     description: 'Take a screenshot for the user and save it to their Ottoman folder (Pictures/Ottoman); optionally copy it to the clipboard. target: page (visible part), full_page, element (needs ref), or desktop (whole screen, any app).',
@@ -101,6 +101,24 @@ export const declarations: FunctionDeclaration[] = [
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Pads an image to a square (black below or to the right) and returns it as base64 JPEG, for the model to point at. */
+async function squared(base64: string, mimeType: string): Promise<string> {
+  const img = await createImageBitmap(await (await fetch(`data:${mimeType};base64,${base64}`)).blob());
+  const side = Math.max(img.width, img.height);
+  const canvas = new OffscreenCanvas(side, side);
+  const g = canvas.getContext('2d')!;
+  g.fillStyle = '#000';
+  g.fillRect(0, 0, side, side);
+  g.drawImage(img, 0, 0);
+  const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.7 });
+  const url = await new Promise<string>((resolve) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.readAsDataURL(blob);
+  });
+  return url.slice(url.indexOf(',') + 1);
+}
+
 /** Adds a scheme to bare addresses: http for local hosts, https otherwise. */
 export const normalizeUrl = (url: string) =>
   /^(https?|file|about|data|chrome):/i.test(url) ? url : `${/^(localhost|127\.|\d+\.\d+\.\d+\.\d+)/.test(url) ? 'http' : 'https'}://${url}`;
@@ -112,7 +130,26 @@ export function createTools(ctx: ToolContext) {
   let browser!: Browser;
   let refs = new Map<number, number>();
   let approval: { until: number; url: string } | null = null;
-  let shotScale = 1;
+  // Viewport at the last screenshot the model saw. click_at points are on Gemini's 0-1000 grid, which it lays over a
+  // square frame; screenshots are padded to a square (squared below) so that grid maps onto the page's longest side.
+  let shot: string | null = null;
+  // Size and scroll of the viewport. Chrome's "started debugging" bar or a scroll changes it and moves the page under
+  // the model's picture, so a point from an older screenshot would land in the wrong place.
+  const viewport = async () => {
+    const { cssLayoutViewport: v } = await browser.send('Page.getLayoutMetrics');
+    return [v.clientWidth, v.clientHeight, v.pageX, v.pageY].join(',');
+  };
+  const rememberShot = async () => void (shot = await viewport());
+  const fromGrid = async (x: number, y: number) => {
+    const now = await viewport();
+    if (!shot) throw new Error('No screenshot of this page yet. Call screenshot first, then click_at.');
+    if (now !== shot) throw new Error('The page moved or resized since the last screenshot. Take a new screenshot, then click_at again.');
+    const [w, h] = now.split(',').map(Number);
+    const side = Math.max(w, h);
+    const p = { x: (x / 1000) * side, y: (y / 1000) * side };
+    if (p.x < 0 || p.y < 0 || p.x > w || p.y > h) throw new Error('That point is outside the page (in the black padding of the screenshot). Look again and pick a point on the page.');
+    return p;
+  };
 
   // Read from the browser, not the page: page scripts hang while a dialog is open.
   const pageUrl = async () =>
@@ -226,7 +263,8 @@ export function createTools(ctx: ToolContext) {
 
   /**
    * Describes what pressing Enter in the focused field would do, if that is risky: submit a form whose submit
-   * button is risky, or send a comment/reply/message box that submits on Enter without a form (common on social sites).
+   * button is risky, or send from a text box outside a form (social sites post comments and messages on Enter,
+   * often with no telling label). Only search boxes are exempt.
    */
   async function riskyEnter(): Promise<string> {
     const { result } = await browser.send('Runtime.evaluate', {
@@ -240,7 +278,8 @@ export function createTools(ctx: ToolContext) {
         }
         if (a.isContentEditable || a.tagName === 'TEXTAREA' || a.getAttribute('role') === 'textbox') {
           const hint = [a.getAttribute('aria-label'), a.getAttribute('placeholder'), a.dataset?.placeholder, a.closest('[aria-label]')?.getAttribute('aria-label')].filter(Boolean).join(' ');
-          return /comment|reply|post|message|tweet|write|chat/i.test(hint) ? { kind: 'box', label: hint.trim().slice(0, 60) } : null;
+          if (a.getAttribute('role') === 'searchbox' || a.closest('[role=search]') || /search|find|filter/i.test(hint)) return null;
+          return { kind: 'box', label: hint.trim().slice(0, 60) || 'text box' };
         }
         return null;
       })()`,
@@ -339,9 +378,9 @@ export function createTools(ctx: ToolContext) {
         else if (dx !== undefined || dy !== undefined) to = { x: from.x + (dx ?? 0), y: from.y + (dy ?? 0) };
         else throw new Error('drag needs to_ref, or dx/dy, together with from_ref.');
       } else if ([from_x, from_y, to_x, to_y].every((v) => typeof v === 'number')) {
-        // Screenshot pixel coordinates, like click_at.
-        from = { x: from_x * shotScale, y: from_y * shotScale };
-        to = { x: to_x * shotScale, y: to_y * shotScale };
+        // Screenshot grid points, like click_at.
+        from = await fromGrid(from_x, from_y);
+        to = await fromGrid(to_x, to_y);
       } else throw new Error('drag needs from_ref (with to_ref or dx/dy), or from_x, from_y, to_x, to_y.');
       const before = await pageSignature();
       await pointer().drag(from, to);
@@ -349,7 +388,7 @@ export function createTools(ctx: ToolContext) {
     },
 
     async click_at({ x, y }) {
-      const [cx, cy] = [x * shotScale, y * shotScale];
+      const { x: cx, y: cy } = await fromGrid(x, y);
       const { result } = await browser.send('Runtime.evaluate', {
         expression: `(() => { const e = document.elementFromPoint(${cx}, ${cy})?.closest('button,a,input,[role=button]') || document.elementFromPoint(${cx}, ${cy});
           return e ? [e.innerText, e.value, e.getAttribute('aria-label'), e.getAttribute('title')].filter(Boolean).join(' ').trim().slice(0, 80) : ''; })()`,
@@ -484,13 +523,10 @@ export function createTools(ctx: ToolContext) {
 
     async screenshot() {
       // The drawn cursor is hidden while capturing, so the model sees only the page.
-      const [{ data }, { cssLayoutViewport: v }] = await pointer().withHidden(() =>
-        Promise.all([browser.send('Page.captureScreenshot', { format: 'jpeg', quality: 60 }), browser.send('Page.getLayoutMetrics')]),
-      );
-      const img = await createImageBitmap(await (await fetch(`data:image/jpeg;base64,${data}`)).blob());
-      shotScale = v.clientWidth / img.width;
-      ctx.sendImage(data, 'image/jpeg');
-      return `Screenshot sent as an image (${img.width}x${img.height}). For click_at use pixel coordinates in that image.`;
+      const { data } = await pointer().withHidden(() => browser.send('Page.captureScreenshot', { format: 'jpeg', quality: 60 }));
+      await rememberShot();
+      ctx.sendImage(await squared(data, 'image/jpeg'), 'image/jpeg');
+      return 'Screenshot sent as an image: the page fills the top-left, black padding fills the rest. For click_at give the point on a 0-1000 grid over the whole image.';
     },
 
     async take_screenshot({ target = 'page', ref: r, copy = false, name }) {
@@ -514,7 +550,11 @@ export function createTools(ctx: ToolContext) {
       }
       const { data } = await pointer().withHidden(() => browser.send('Page.captureScreenshot', params, 60000));
       const saved = await ctx.saveImage(data, name, copy);
-      ctx.sendImage(data, 'image/png');
+      // The model sees this image too; a page shot is squared like screenshot so click_at can use it.
+      if (target === 'page') {
+        await rememberShot();
+        ctx.sendImage(await squared(data, 'image/png'), 'image/jpeg');
+      } else ctx.sendImage(data, 'image/png');
       return `Saved ${target.replace('_', ' ')} screenshot as ${saved.file} (${saved.path})${copy ? ', copied to clipboard' : ''}. The image was sent to you.`;
     },
 
@@ -624,7 +664,19 @@ export function createTools(ctx: ToolContext) {
   const failed = (r: Record<string, unknown>) =>
     !!r.error || /^(Not clicked|Not done)|NOTHING CHANGED/.test(String(r.output ?? ''));
 
-  return async function run(name: string, args: any): Promise<Record<string, unknown>> {
+  // reset: a new request from the user starts with a clean slate; Chrome or the page may have changed meanwhile.
+  // stop: the user pressed Stop; every tool refuses until their next request.
+  let stopped = false;
+  return Object.assign(run, {
+    reset: () => {
+      fruitless.clear();
+      stopped = false;
+    },
+    stop: () => void (stopped = true),
+  });
+
+  async function run(name: string, args: any): Promise<Record<string, unknown>> {
+    if (stopped) return { error: 'Stopped by the user. Do not continue this task; wait for their next request.' };
     const key = `${name}${JSON.stringify(args ?? {})}`;
     if ((fruitless.get(key) ?? 0) >= 2) {
       return {
@@ -636,7 +688,7 @@ export function createTools(ctx: ToolContext) {
     if (failed(result)) fruitless.set(key, (fruitless.get(key) ?? 0) + 1);
     else if (!['snapshot', 'read_page', 'list_tabs', 'list_saved', 'wait', 'screenshot'].includes(name)) fruitless.clear();
     return result;
-  };
+  }
 
   async function execute(name: string, args: any): Promise<Record<string, unknown>> {
     const handler = handlers[name];

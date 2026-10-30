@@ -1,53 +1,109 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+
+/* Follow the system theme; the app has no theme switch. */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
 :root {
-  --bg: #f7f7f8;
-  --panel: #fff;
-  --text: #1f2328;
-  --muted: #6b7280;
-  --accent: #2563eb;
-  --user: #dbeafe;
-  --border: #e5e7eb;
-  --danger: #dc2626;
-  font: 14px/1.45 system-ui, "Segoe UI", sans-serif;
-  color: var(--text);
-  background: var(--bg);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: #0f766e;
+  --primary-foreground: #ffffff;
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: #10b981;
+  --user: #ccfbf1;
+  --radius: 0.625rem;
+  color-scheme: light;
 }
+
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #16181d; --panel: #1f232a; --text: #e6e6e6; --muted: #9aa0a6; --user: #1e3a5f; --border: #2e333b; }
+  :root {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: #0f766e;
+    --primary-foreground: #ffffff;
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: #10b981;
+    --user: #134e4a;
+    color-scheme: dark;
+  }
 }
-* { box-sizing: border-box; }
-body { margin: 0; }
-.app { display: flex; flex-direction: column; height: 100vh; }
-header { display: flex; gap: 10px; align-items: baseline; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); }
-.status { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-.entry { padding: 8px 12px; border-radius: 12px; max-width: 90%; white-space: pre-wrap; word-break: break-word; }
-.entry.user { align-self: flex-end; background: var(--user); }
-.entry.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); }
-.entry.tool { align-self: flex-start; color: var(--muted); font: 11px/1.3 ui-monospace, Consolas, monospace; padding: 2px 4px; max-height: 3.9em; overflow: hidden; }
-.approval { border: 2px solid var(--danger); border-radius: 12px; padding: 12px; background: var(--panel); }
-.approval p { margin: 6px 0 10px; font-weight: 600; }
-.approval small { color: var(--muted); }
-.row { display: flex; gap: 8px; margin-bottom: 6px; }
-footer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); background: var(--panel); }
-footer input { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; }
-button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 0; background: var(--accent); color: #fff; cursor: pointer; }
-button:disabled { opacity: .45; cursor: default; }
-button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
-button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.mic { width: 42px; padding: 0; font-size: 18px; }
-.mic.on { background: var(--danger); animation: pulse 1.2s infinite; }
-@keyframes pulse { 50% { opacity: .7; } }
-header .icon { padding: 4px 10px; font-size: 16px; }
-header .icon:first-of-type { margin-left: auto; }
-.settings { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--panel); }
-.settings label { font-weight: 600; font-size: 12px; margin-top: 6px; }
-.settings select, .settings input { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; min-width: 0; }
-.settings .row { align-items: center; margin: 0; }
-.settings .row select { flex: 1; }
-.settings small { color: var(--muted); margin-top: 6px; }
-.welcome { margin: auto 0; padding: 16px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); }
-.welcome h2 { margin: 0 0 8px; font-size: 18px; }
-.welcome p { margin: 6px 0; color: var(--muted); }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.chip { background: var(--user); color: var(--text); padding: 6px 10px; border-radius: 16px; font-size: 13px; text-align: left; }
-.settings label.check { display: flex; gap: 8px; align-items: center; font-weight: 400; font-size: 13px; }
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: 'Inter Variable', sans-serif;
+  --color-ring: var(--ring);
+  --color-user: var(--user);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: var(--input) transparent;
+  }
+  body {
+    @apply overflow-hidden bg-background text-foreground text-sm;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+/* Listening ring on the mic button. box-shadow, not transform: it never adds scrollable overflow, so nothing shifts. */
+@keyframes mic-ring {
+  from { box-shadow: 0 0 0 0 color-mix(in oklch, var(--destructive) 55%, transparent); }
+  to { box-shadow: 0 0 0 9px transparent; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .mic-ring { animation: mic-ring 1.4s ease-out infinite; }
+}

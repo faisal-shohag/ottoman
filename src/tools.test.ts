@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isRisky, normalizeUrl } from './tools';
+import { createTools, isRisky, normalizeUrl, type ToolContext } from './tools';
 
 describe('isRisky', () => {
   it.each(['Pay now', 'Place order', 'Checkout', 'Post', 'Publish', 'Reply', 'Comment', 'Tweet', 'Repost', 'Share', 'Send message', 'Delete my data', 'Subscribe', 'Donate', 'Withdraw'])(
@@ -19,5 +19,18 @@ describe('normalizeUrl', () => {
     expect(normalizeUrl('127.0.0.1:8080')).toBe('http://127.0.0.1:8080');
     expect(normalizeUrl('example.com')).toBe('https://example.com');
     expect(normalizeUrl('https://x.dev/a')).toBe('https://x.dev/a');
+  });
+});
+
+describe('stop', () => {
+  it('refuses every tool after Stop until the next request', async () => {
+    let calls = 0;
+    const run = createTools({ listSaved: async () => (calls++, ['a.png']) } as unknown as ToolContext);
+    expect((await run('list_saved', {})).error).toBeUndefined();
+    run.stop();
+    expect(String((await run('list_saved', {})).error)).toMatch(/^Stopped by the user/);
+    run.reset();
+    expect((await run('list_saved', {})).error).toBeUndefined();
+    expect(calls).toBe(2);
   });
 });

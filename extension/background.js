@@ -57,7 +57,7 @@ async function addToGroup(tab) {
   const [group] = await chrome.tabGroups.query({ title: GROUP_TITLE, windowId: tab.windowId });
   if (group) return chrome.tabs.group({ tabIds: [tab.id], groupId: group.id });
   const groupId = await chrome.tabs.group({ tabIds: [tab.id], createProperties: { windowId: tab.windowId } });
-  await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: 'blue' });
+  await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: 'green' });
 }
 
 const browserCommands = {
@@ -66,7 +66,10 @@ const browserCommands = {
   'Target.getTargetInfo': async ({ targetId }) => ({ targetInfo: info(await chrome.tabs.get(Number(targetId))) }),
   'Target.createTarget': async ({ url }) => {
     const windowId = await agentWindow();
-    const tab = await chrome.tabs.create({ url, active: true, ...(windowId != null && { windowId }) });
+    // Chrome keeps running in the background after its last window closes; then a tab needs a new window.
+    const tab = windowId != null
+      ? await chrome.tabs.create({ url, active: true, windowId })
+      : (await chrome.windows.create({ url, focused: true, type: 'normal' })).tabs[0];
     agentTabId = tab.id;
     await addToGroup(tab).catch(() => {}); // grouping is cosmetic
     return { targetId: String(tab.id) };

@@ -20,6 +20,9 @@ const INTERACTIVE = new Set([
 ]);
 // Named regions are landmarks like "Messages panel" that the model can scroll inside.
 const CONTEXT = new Set(['heading', 'StaticText', 'image', 'dialog', 'alertdialog', 'alert', 'status', 'Iframe', 'img', 'region']);
+// Menus and dialogs usually mount at the end of <body>; on long pages they would fall past the line cap.
+const LAYERS = new Set(['menu', 'listbox', 'dialog', 'alertdialog']);
+const LAYER_LINES = 100;
 const FLAGS = ['checked', 'selected', 'expanded', 'disabled', 'required', 'invalid', 'focused', 'readonly', 'multiselectable'];
 
 const clip = (s: string, n = 100) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
@@ -27,17 +30,22 @@ const clip = (s: string, n = 100) => (s.length > n ? s.slice(0, n - 1) + '…' :
 /**
  * Formats AX nodes as lines like `[3] button "Send" disabled`. Text under an interactive node is skipped
  * because the node's name already carries it. Every line gets a ref, so plain text (e.g. a clickable div)
- * can be clicked too.
+ * can be clicked too. Open menus and dialogs are listed first and do not count against `maxLines`.
  */
 export function formatTree(nodes: AXNode[], refs: Map<number, number>, maxLines: number): string[] {
   const byId = new Map(nodes.map((n) => [n.nodeId, n]));
   const root = nodes.find((n) => !n.parentId) ?? nodes[0];
   const lines: string[] = [];
   let dropped = 0;
+  let limit = maxLines;
+  const seen = new Set<string>(); // listed in the layer pass
+  let layerPass = false;
 
   const editable = (n?: AXNode) => !!n?.properties?.some((p) => p.name === 'editable' && p.value?.value);
 
   const visit = (n: AXNode, insideInteractive: boolean) => {
+    if (seen.has(n.nodeId)) return;
+    if (layerPass) seen.add(n.nodeId);
     // A contenteditable without a role shows up as generic; list its root as a textbox.
     const editableRoot = editable(n) && !editable(byId.get(n.parentId ?? ''));
     const role = editableRoot && !INTERACTIVE.has(String(n.role?.value)) ? 'textbox' : String(n.role?.value ?? '');
@@ -49,7 +57,7 @@ export function formatTree(nodes: AXNode[], refs: Map<number, number>, maxLines:
       (interactive || (CONTEXT.has(role) && !!name && !(insideInteractive && role === 'StaticText')));
 
     if (show) {
-      if (lines.length >= maxLines) dropped++;
+      if (lines.length >= limit) dropped++;
       else {
         const ref = refs.size + 1;
         refs.set(ref, n.backendDOMNodeId!);
@@ -69,6 +77,20 @@ export function formatTree(nodes: AXNode[], refs: Map<number, number>, maxLines:
       if (child) visit(child, insideInteractive || interactive);
     }
   };
+  const layers = nodes.filter((n) => !n.ignored && LAYERS.has(String(n.role?.value)) && (n.childIds?.length ?? 0) > 0);
+  if (layers.length) {
+    layerPass = true;
+    lines.push('Open menu/dialog:');
+    for (const l of layers) {
+      limit = lines.length + LAYER_LINES;
+      visit(l, false);
+    }
+    if (lines.length === 1) lines.pop(); // only empty layers
+    layerPass = false;
+    dropped = 0;
+    if (lines.length) lines.push('Page:');
+  }
+  limit = lines.length + maxLines;
   if (root) visit(root, false);
   if (dropped) lines.push(`… ${dropped} more elements not shown. Scroll, or use read_page for text.`);
   return lines;
