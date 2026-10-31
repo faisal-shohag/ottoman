@@ -1,6 +1,6 @@
 [package]
 name = "ottoman"
-version = "0.1.0"
+version = "0.2.0"
 description = "Voice browser companion"
 authors = ["you"]
 edition = "2024"
