@@ -1,0 +1,50 @@
+name: Release
+
+# Push a tag made by `pnpm release <version>` (e.g. v0.2.0) to build the Windows installers and attach them to a
+# draft GitHub Release. Check the draft, then publish it by hand.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: pnpm install --frozen-lockfile
+      - name: Tag matches versions in package.json, tauri.conf.json and Cargo.toml
+        run: node scripts/release.mjs check ${{ github.ref_name }}
+      - run: pnpm test
+      - name: Release notes from CHANGELOG.md
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo 'body<<NOTES_EOF'
+            node scripts/release.mjs notes ${{ github.ref_name }}
+            echo 'NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Ottoman ${{ github.ref_name }}
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: true
+          prerelease: false
