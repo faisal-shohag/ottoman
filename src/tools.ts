@@ -13,9 +13,16 @@ export interface ToolContext {
   sendImage: (base64: string, mimeType: string) => void;
   /** Saves a PNG to the Ottoman folder (Pictures/Ottoman), optionally copying it to the clipboard. */
   saveImage: (pngBase64: string, name: string | undefined, copy: boolean) => Promise<{ file: string; path: string }>;
-  captureDesktop: (name: string | undefined, copy: boolean) => Promise<{ file: string; path: string; png_base64: string }>;
+  /** Captures the primary monitor, or one window matched by title or app name. */
+  captureDesktop: (name: string | undefined, copy: boolean, window?: string) => Promise<{ file: string; path: string; png_base64: string }>;
   /** File names in the Ottoman folder, newest first. */
   listSaved: () => Promise<string[]>;
+  /** Launches a Start menu app by name; resolves to the app's full name. */
+  openApp: (name: string) => Promise<string>;
+  /** Closes a window like clicking its X; resolves to the window title. */
+  closeApp: (name: string) => Promise<string>;
+  /** Desktop app control (src-tauri/src/desktop.rs): runs one of the app_* Rust commands. */
+  desktop: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
   /** Absolute path of a file in the Ottoman folder; rejects anything outside it. */
   resolveUpload: (file: string) => Promise<string>;
   copyFile: (file: string) => Promise<void>;
@@ -26,6 +33,13 @@ export interface ToolContext {
 // Actions that are hard to undo: payments, posting, commenting, sending, deleting. Plain links are never gated.
 const RISKY = /\b(submit|send|post|publish|pay|payment|buy|order|checkout|check out|purchase|delete|confirm|place|transfer|sign ?up|subscribe|donate|tip|withdraw|book|reserve|comment|reply|tweet|retweet|repost|share|upload)\b/i;
 export const isRisky = (label: string) => RISKY.test(label);
+// Extra words for desktop apps, where a click can lose unsaved work or change the system.
+const APP_RISKY = /\bdon[’']?t save\b|\bdiscard|\berase\b|\bformat\b|\buninstall|\boverwrite|\breplace it\b|\bempty recycle bin\b|\bsign out\b|\bshut ?down\b|\brestart\b|\bpermanently\b/i;
+export const isRiskyInApp = (label: string) => isRisky(label) || APP_RISKY.test(label);
+// Buttons that mean Enter in a text box would send something.
+const SENDS = /\b(send|post|reply|comment|tweet|publish|submit)\b/i;
+
+interface AppSnapshot { window: string; hwnd: number; text: string; labels: Record<number, string> }
 
 const obj = (properties: object, required: string[] = []) => ({ type: 'object', properties, required });
 const ref = { type: 'integer', description: 'Element ref number from the latest snapshot.' };
@@ -72,13 +86,48 @@ export const declarations: FunctionDeclaration[] = [
   { name: 'click_at', description: 'Click a point of the latest screenshot, given on a 0-1000 grid: x from 0 (left edge) to 1000 (right edge), y from 0 (top) to 1000 (bottom). Only for things not in the snapshot.', parametersJsonSchema: obj({ x: { type: 'number' }, y: { type: 'number' } }, ['x', 'y']) },
   {
     name: 'take_screenshot',
-    description: 'Take a screenshot for the user and save it to their Ottoman folder (Pictures/Ottoman); optionally copy it to the clipboard. target: page (visible part), full_page, element (needs ref), or desktop (whole screen, any app).',
+    description: 'Take a screenshot for the user and save it to their Ottoman folder (Pictures/Ottoman); optionally copy it to the clipboard. target: page (visible part), full_page, element (needs ref), desktop (whole screen, any app), or window (one app window, needs window).',
     parametersJsonSchema: obj({
-      target: { type: 'string', enum: ['page', 'full_page', 'element', 'desktop'] },
+      target: { type: 'string', enum: ['page', 'full_page', 'element', 'desktop', 'window'] },
       ref,
+      window: { type: 'string', description: 'App name or window title for target window, e.g. "Notepad".' },
       copy: { type: 'boolean', description: 'Also copy the image to the clipboard.' },
       name: { type: 'string', description: 'File name without extension; default is timestamped.' },
     }),
+  },
+  { name: 'open_app', description: 'Open a desktop app from the Start menu by name, e.g. "Calculator", "Notepad", "Spotify".', parametersJsonSchema: obj({ name: { type: 'string' } }, ['name']) },
+  { name: 'close_app', description: 'Close a desktop app window by app name or window title, like clicking its X. The app may still ask to save.', parametersJsonSchema: obj({ name: { type: 'string' } }, ['name']) },
+  {
+    name: 'app_snapshot',
+    description: "List a desktop app window's controls as [ref] lines (like snapshot, for apps). Pass window (app name or window title) to pick the app, e.g. after open_app; omit it to re-read the current app. Refs change after every action.",
+    parametersJsonSchema: obj({ window: { type: 'string', description: 'App name or window title, e.g. "Calculator".' } }),
+  },
+  {
+    name: 'app_click',
+    description: 'Click a control of the current app by ref. Returns the updated app snapshot.',
+    parametersJsonSchema: obj({ ref, button: { type: 'string', enum: ['left', 'right'] }, double: { type: 'boolean' } }, ['ref']),
+  },
+  {
+    name: 'app_type',
+    description: 'Type text into a control of the current app (edit box, document). Appends unless clear=true. Newlines press Enter.',
+    parametersJsonSchema: obj({ ref, text: { type: 'string' }, clear: { type: 'boolean' }, submit: { type: 'boolean', description: 'Press Enter after typing.' } }, ['ref', 'text']),
+  },
+  { name: 'app_key', description: 'Press a key or shortcut in the current app, e.g. Enter, Escape, Control+S, Alt+F4, Control+Shift+Tab.', parametersJsonSchema: obj({ key: { type: 'string' } }, ['key']) },
+  {
+    name: 'app_scroll',
+    description: 'Scroll the current app window, or the area under a ref.',
+    parametersJsonSchema: obj({ direction: { type: 'string', enum: ['up', 'down'] }, ref }, ['direction']),
+  },
+  { name: 'app_screenshot', description: 'See the current app window as an image. Use when app_snapshot misses something (canvas, games, custom-drawn apps).', parametersJsonSchema: obj({}) },
+  {
+    name: 'app_click_at',
+    description: 'Click a point of the latest app_screenshot on a 0-1000 grid (x left to right, y top to bottom). Only for things not in app_snapshot.',
+    parametersJsonSchema: obj({ x: { type: 'number' }, y: { type: 'number' } }, ['x', 'y']),
+  },
+  {
+    name: 'calculate',
+    description: 'Work out arithmetic exactly: + - * / % ^, parentheses, sqrt(). Always use this for any calculation the user asks about; never do math in your head.',
+    parametersJsonSchema: obj({ expression: { type: 'string', description: 'e.g. "5 + 5", "(12*3+4)/8", "sqrt(144)", "15% of 80" as "0.15*80".' } }, ['expression']),
   },
   { name: 'list_saved', description: 'List files in the Ottoman folder (screenshots and files the user put there), newest first.', parametersJsonSchema: obj({}) },
   {
@@ -122,6 +171,61 @@ async function squared(base64: string, mimeType: string): Promise<string> {
 /** Adds a scheme to bare addresses: http for local hosts, https otherwise. */
 export const normalizeUrl = (url: string) =>
   /^(https?|file|about|data|chrome):/i.test(url) ? url : `${/^(localhost|127\.|\d+\.\d+\.\d+\.\d+)/.test(url) ? 'http' : 'https'}://${url}`;
+/**
+ * Evaluates arithmetic (+ - * / % ^, parentheses, sqrt) exactly as written, without eval. The voice model
+ * gets sums wrong in its head ("5 + 5 = 9"), so it must call this instead.
+ */
+export function calculate(expression: string): number {
+  const src = expression.replace(/×|x/gi, '*').replace(/÷/g, '/').replace(/\*\*/g, '^').replace(/,/g, '');
+  let i = 0;
+  const peek = () => src.slice(i).trimStart()[0] ?? '';
+  const take = (c: string) => (peek() === c ? ((i = src.length - src.slice(i).trimStart().length + 1), true) : false);
+  const expr = (): number => {
+    let v = term();
+    for (;;) {
+      if (take('+')) v += term();
+      else if (take('-')) v -= term();
+      else return v;
+    }
+  };
+  const term = (): number => {
+    let v = power();
+    for (;;) {
+      if (take('*')) v *= power();
+      else if (take('/')) v /= power();
+      else if (take('%')) v %= power();
+      else return v;
+    }
+  };
+  const power = (): number => {
+    const base = unary();
+    return take('^') ? base ** power() : base;
+  };
+  const unary = (): number => (take('-') ? -unary() : take('+') ? unary() : primary());
+  const primary = (): number => {
+    if (take('(')) {
+      const v = expr();
+      if (!take(')')) throw new Error(`Missing ")" in "${expression}".`);
+      return v;
+    }
+    const rest = src.slice(i).trimStart();
+    const m = /^(sqrt)\s*\(|^\d*\.?\d+(e[+-]?\d+)?/i.exec(rest);
+    if (!m) throw new Error(`Cannot read "${rest || expression}" as a number.`);
+    i = src.length - rest.length + m[0].length;
+    if (m[1]) {
+      const v = expr();
+      if (!take(')')) throw new Error(`Missing ")" in "${expression}".`);
+      return Math.sqrt(v);
+    }
+    return Number(m[0]);
+  };
+  const v = expr();
+  if (src.slice(i).trim()) throw new Error(`Unexpected "${src.slice(i).trim()}" in "${expression}".`);
+  if (!Number.isFinite(v)) throw new Error(`"${expression}" has no finite result (division by zero?).`);
+  // Round away float noise like 0.30000000000000004.
+  return Number(v.toPrecision(12));
+}
+
 // Text nodes act through their parent element, and labels through the control they label.
 const ELEMENT = `let el = this.nodeType === 3 ? this.parentElement : this;
   if (el.tagName === 'LABEL' && el.control) el = el.control;`;
@@ -129,7 +233,11 @@ const ELEMENT = `let el = this.nodeType === 3 ? this.parentElement : this;
 export function createTools(ctx: ToolContext) {
   let browser!: Browser;
   let refs = new Map<number, number>();
-  let approval: { until: number; url: string } | null = null;
+  let approval: { until: number; scope: string } | null = null;
+  // Desktop app being driven, from its latest app_snapshot; inApp is true while the model works in it.
+  let app: AppSnapshot | null = null;
+  let appShot: string | null = null;
+  let inApp = false;
   // Viewport at the last screenshot the model saw. click_at points are on Gemini's 0-1000 grid, which it lays over a
   // square frame; screenshots are padded to a square (squared below) so that grid maps onto the page's longest side.
   let shot: string | null = null;
@@ -151,6 +259,22 @@ export function createTools(ctx: ToolContext) {
     return p;
   };
 
+  // Approvals hold for one page, or for one app window.
+  const scopeNow = async () => (inApp ? `app:${app?.hwnd}` : await pageUrl());
+
+  const appLook = (s: AppSnapshot) => ((app = s), s.text);
+  // A generic confirm button is as risky as the question its dialog asks.
+  const appRisky = (label: string) => isRiskyInApp(label) || (/^(yes|ok|continue)$/i.test(label.trim()) && APP_RISKY.test(app?.text ?? ''));
+  /** Why pressing Enter in the app needs approval, or '' (it may press a risky default button like Send). */
+  async function appRiskyEnter() {
+    const focused = await ctx.desktop<{ name: string; text_entry: boolean }>('app_focused');
+    if (appRisky(focused.name)) return `Press Enter on "${focused.name}"`;
+    // Enter in a message box of a chat or mail app sends; elsewhere (renaming, lists, Calculator) it is harmless.
+    if (!focused.text_entry) return '';
+    const button = [...(app?.text ?? '').matchAll(/button "([^"]*)"/g)].map((m) => m[1]).find((b) => SENDS.test(b));
+    return button ? `Press Enter to send (the window has a "${button}" button)` : '';
+  }
+
   // Read from the browser, not the page: page scripts hang while a dialog is open.
   const pageUrl = async () =>
     browser ? (await browser.cdp.send('Target.getTargetInfo', { targetId: browser.targetId })).targetInfo.url as string : '';
@@ -160,12 +284,12 @@ export function createTools(ctx: ToolContext) {
    * given on this same page; otherwise asks the user directly, naming the real action. Returns null to proceed.
    */
   async function gate(action: string): Promise<string | null> {
-    const url = await pageUrl();
+    const scope = await scopeNow();
     const a = approval;
     approval = null;
-    if (a && Date.now() < a.until && a.url === url) return null;
-    const where = url.replace(/^https?:\/\//, '').split(/[?#]/)[0];
-    if (await ctx.requestApproval(`${action} on ${where}`)) return null;
+    if (a && Date.now() < a.until && a.scope === scope) return null;
+    const where = inApp ? `in ${app?.window}` : `on ${scope.replace(/^https?:\/\//, '').split(/[?#]/)[0]}`;
+    if (await ctx.requestApproval(`${action} ${where}`)) return null;
     return `User declined: ${action}. Not done. Do not retry; ask the user what to do instead.`;
   }
 
@@ -502,7 +626,7 @@ export function createTools(ctx: ToolContext) {
       const deadline = Date.now() + Math.min(seconds ?? 10, 30) * 1000;
       if (!text) {
         await sleep(deadline - Date.now());
-        return look();
+        return inApp ? appLook(await ctx.desktop<AppSnapshot>('app_snapshot', { window: null })) : look();
       }
       while (Date.now() < deadline) {
         const { result } = await browser.send('Runtime.evaluate', { expression: `document.body.innerText.includes(${JSON.stringify(text)})`, returnByValue: true });
@@ -529,11 +653,11 @@ export function createTools(ctx: ToolContext) {
       return 'Screenshot sent as an image: the page fills the top-left, black padding fills the rest. For click_at give the point on a 0-1000 grid over the whole image.';
     },
 
-    async take_screenshot({ target = 'page', ref: r, copy = false, name }) {
-      if (target === 'desktop') {
-        const shot = await ctx.captureDesktop(name, copy);
+    async take_screenshot({ target = 'page', ref: r, copy = false, name, window }) {
+      if (target === 'desktop' || target === 'window') {
+        const shot = await ctx.captureDesktop(name, copy, target === 'window' ? window : undefined);
         ctx.sendImage(shot.png_base64, 'image/png');
-        return `Saved desktop screenshot as ${shot.file} (${shot.path})${copy ? ', copied to clipboard' : ''}. The image was sent to you.`;
+        return `Saved ${target} screenshot as ${shot.file} (${shot.path})${copy ? ', copied to clipboard' : ''}. The image was sent to you.`;
       }
       const params: Record<string, unknown> = { format: 'png' };
       if (target === 'full_page') {
@@ -556,6 +680,65 @@ export function createTools(ctx: ToolContext) {
         ctx.sendImage(await squared(data, 'image/png'), 'image/jpeg');
       } else ctx.sendImage(data, 'image/png');
       return `Saved ${target.replace('_', ' ')} screenshot as ${saved.file} (${saved.path})${copy ? ', copied to clipboard' : ''}. The image was sent to you.`;
+    },
+
+    async open_app({ name }) {
+      return `Opened ${await ctx.openApp(name)}.`;
+    },
+
+    async close_app({ name }) {
+      return `Asked "${await ctx.closeApp(name)}" to close.`;
+    },
+
+    async app_snapshot({ window }) {
+      return appLook(await ctx.desktop<AppSnapshot>('app_snapshot', { window: window ?? null }));
+    },
+
+    async app_click({ ref: r, button, double }) {
+      const label = app?.labels[r] ?? '';
+      if (appRisky(label)) {
+        const declined = await gate(`Click "${label}"`);
+        if (declined) return declined;
+      }
+      return appLook(await ctx.desktop<AppSnapshot>('app_click', { index: r, button: button ?? null, double: double ?? null }));
+    },
+
+    async app_type({ ref: r, text, clear = false, submit = false }) {
+      const action = submit || /\n/.test(text) ? await appRiskyEnter() : '';
+      if (action) {
+        const declined = await gate(action);
+        if (declined) return declined;
+      }
+      return appLook(await ctx.desktop<AppSnapshot>('app_type', { index: r, text, clear, submit }));
+    },
+
+    async app_key({ key }) {
+      const action = /^enter$/i.test(key) ? await appRiskyEnter() : /^shift\+(delete|del)$/i.test(key) ? 'Permanently delete (Shift+Delete)' : '';
+      if (action) {
+        const declined = await gate(action);
+        if (declined) return declined;
+      }
+      return appLook(await ctx.desktop<AppSnapshot>('app_key', { key }));
+    },
+
+    async app_scroll({ direction, ref: r }) {
+      return appLook(await ctx.desktop<AppSnapshot>('app_scroll', { direction, index: r ?? null }));
+    },
+
+    async app_screenshot() {
+      const shot = await ctx.desktop<{ png_base64: string; rect: string }>('app_capture');
+      appShot = shot.rect;
+      ctx.sendImage(await squared(shot.png_base64, 'image/png'), 'image/jpeg');
+      return 'App screenshot sent as an image: the window fills the top-left, black padding fills the rest. For app_click_at give the point on a 0-1000 grid over the whole image.';
+    },
+
+    async app_click_at({ x, y }) {
+      if (!appShot) throw new Error('No app screenshot yet. Call app_screenshot first, then app_click_at.');
+      return appLook(await ctx.desktop<AppSnapshot>('app_click_at', { x, y, rect: appShot }));
+    },
+
+    async calculate({ expression }) {
+      return `${expression} = ${calculate(expression)}`;
     },
 
     async list_saved() {
@@ -650,7 +833,7 @@ export function createTools(ctx: ToolContext) {
     async confirm_action({ summary }) {
       const ok = await ctx.requestApproval(summary);
       // Valid once, for a minute, on this page only; anything else makes the tool ask the user again.
-      approval = ok ? { until: Date.now() + 60_000, url: await pageUrl() } : null;
+      approval = ok ? { until: Date.now() + 60_000, scope: await scopeNow() } : null;
       return ok ? 'User approved. Do the action now.' : 'User declined. Do not do it; ask what to do instead.';
     },
   };
@@ -686,7 +869,7 @@ export function createTools(ctx: ToolContext) {
     }
     const result = await execute(name, args);
     if (failed(result)) fruitless.set(key, (fruitless.get(key) ?? 0) + 1);
-    else if (!['snapshot', 'read_page', 'list_tabs', 'list_saved', 'wait', 'screenshot'].includes(name)) fruitless.clear();
+    else if (!['snapshot', 'read_page', 'list_tabs', 'list_saved', 'wait', 'screenshot', 'app_snapshot', 'app_screenshot'].includes(name)) fruitless.clear();
     return result;
   }
 
@@ -695,9 +878,13 @@ export function createTools(ctx: ToolContext) {
     if (!handler) return { error: `Unknown tool ${name}` };
     try {
       // Chrome opens on the first tool that needs it, or reopens if the user closed it.
-      const noBrowser = name === 'confirm_action' || name === 'list_saved' || (name === 'take_screenshot' && args?.target === 'desktop');
+      const desktopTool = name.startsWith('app_') || name === 'open_app' || name === 'close_app';
+      // A plain wait while working in an app stays in the app.
+      const appWait = name === 'wait' && !args?.text && inApp;
+      if (name !== 'confirm_action' && !appWait) inApp = name.startsWith('app_');
+      const noBrowser = desktopTool || appWait || name === 'confirm_action' || name === 'list_saved' || name === 'calculate' || (name === 'take_screenshot' && (args?.target === 'desktop' || args?.target === 'window'));
       if (!noBrowser) browser = await ctx.getBrowser(name === 'open_browser' ? args?.profile : undefined);
-      if (browser?.dialog && !DIALOG_SAFE.has(name)) {
+      if (!desktopTool && browser?.dialog && !DIALOG_SAFE.has(name)) {
         return { error: `A ${browser.dialog.type} dialog is open: "${browser.dialog.message}". Call handle_dialog first.` };
       }
       let output = await handler(args ?? {});

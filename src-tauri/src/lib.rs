@@ -1,3 +1,4 @@
+mod desktop;
 mod relay;
 
 use std::{
@@ -7,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -26,7 +27,7 @@ fn get_config() -> Result<Config, String> {
     let api_key = std::env::var("GEMINI_API_KEY")
         .ok()
         .filter(|k| !k.trim().is_empty())
-        .ok_or("GEMINI_API_KEY is missing. Put it in .env next to package.json.")?;
+        .ok_or("GEMINI_API_KEY is missing. Set it once with `setx GEMINI_API_KEY your-key` and restart Ottoman (or, when developing, put it in .env next to package.json).")?;
     let model = std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3.1-flash-live-preview".into());
     Ok(Config { api_key, model })
 }
@@ -87,9 +88,10 @@ fn chrome_profiles() -> Result<Profiles, String> {
     Ok(Profiles { last_used: profile["last_used"].as_str().unwrap_or("Default").to_string(), profiles })
 }
 
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 fn chrome_running() -> bool {
     use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     Command::new("tasklist")
         .args(["/FI", "IMAGENAME eq chrome.exe", "/NH"])
         .creation_flags(CREATE_NO_WINDOW)
@@ -229,23 +231,120 @@ struct Desktop {
     png_base64: String,
 }
 
-/// Captures the primary monitor, saves it to the Ottoman folder and returns it for the model to see.
+/// Index of the best case-insensitive match for `query` in `names`: exact, then prefix, then substring.
+fn best_match<S: AsRef<str>>(names: &[S], query: &str) -> Option<usize> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = names.iter().map(|n| n.as_ref().to_lowercase()).collect();
+    names
+        .iter()
+        .position(|n| *n == q)
+        .or_else(|| names.iter().position(|n| n.starts_with(&q)))
+        .or_else(|| names.iter().position(|n| n.contains(&q)))
+}
+
+/// Visible (not minimized) window whose title or app name best matches `query`.
+fn find_window(query: &str) -> Result<xcap::Window, String> {
+    let mut windows: Vec<_> = xcap::Window::all()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|w| !w.is_minimized().unwrap_or(true) && !w.title().unwrap_or_default().is_empty())
+        .collect();
+    let titles: Vec<String> = windows.iter().map(|w| w.title().unwrap_or_default()).collect();
+    let apps: Vec<String> = windows.iter().map(|w| w.app_name().unwrap_or_default()).collect();
+    let i = best_match(&titles, query)
+        .or_else(|| best_match(&apps, query))
+        .ok_or_else(|| format!("No visible window matches \"{query}\" (minimized windows are skipped). Open windows: {}", titles.join("; ")))?;
+    Ok(windows.swap_remove(i))
+}
+
+/// Captures one window (matched by title or app name) or else the primary monitor,
+/// saves it to the Ottoman folder and returns it for the model to see.
 #[tauri::command]
-async fn capture_desktop(app: AppHandle, name: Option<String>, copy: bool) -> Result<Desktop, String> {
+async fn capture_desktop(app: AppHandle, name: Option<String>, copy: bool, window: Option<String>) -> Result<Desktop, String> {
     tauri::async_runtime::spawn_blocking(move || {
         use base64::Engine;
-        let monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
-        let monitor = monitors
-            .iter()
-            .find(|m| m.is_primary().unwrap_or(false))
-            .or(monitors.first())
-            .ok_or("No monitor found")?;
-        let img = monitor.capture_image().map_err(|e| format!("Screen capture failed: {e}"))?;
+        let img = match window {
+            Some(query) => find_window(&query)?.capture_image().map_err(|e| format!("Window capture failed: {e}"))?,
+            None => {
+                let monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
+                let monitor = monitors
+                    .iter()
+                    .find(|m| m.is_primary().unwrap_or(false))
+                    .or(monitors.first())
+                    .ok_or("No monitor found")?;
+                monitor.capture_image().map_err(|e| format!("Screen capture failed: {e}"))?
+            }
+        };
         let mut png = std::io::Cursor::new(Vec::new());
         img.write_to(&mut png, image::ImageFormat::Png).map_err(|e| e.to_string())?;
         let png = png.into_inner();
         let saved = save_png(&app, &png, name, copy)?;
         Ok(Desktop { file: saved.file, path: saved.path, png_base64: base64::engine::general_purpose::STANDARD.encode(png) })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
+}
+
+/// Closes one window like clicking its X (WM_CLOSE), so apps still ask to save unsaved work.
+#[tauri::command]
+async fn close_app(name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        const WM_CLOSE: u32 = 0x0010;
+        let window = find_window(&name)?;
+        if window.pid().ok() == Some(std::process::id()) {
+            return Err("Ottoman cannot close its own window.".into());
+        }
+        let title = window.title().unwrap_or_default();
+        let hwnd = window.id().map_err(|e| e.to_string())? as isize;
+        // SAFETY: posting WM_CLOSE to a window handle; an invalid handle just makes the call fail.
+        if unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) } == 0 {
+            return Err(format!("Could not close {title}."));
+        }
+        Ok(title)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Deserialize)]
+struct StartApp {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "AppID")]
+    app_id: String,
+}
+
+/// Launches a Start menu app by name. Only Start menu entries, never arbitrary paths or commands,
+/// so page text cannot make the model run something else.
+#[tauri::command]
+async fn open_app(name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::os::windows::process::CommandExt;
+        let out = Command::new("powershell")
+            .args(["-NoProfile", "-Command", "[Console]::OutputEncoding=[Text.Encoding]::UTF8; ConvertTo-Json -Compress -InputObject @(Get-StartApps)"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("Cannot list apps: {e}"))?;
+        let apps: Vec<StartApp> = serde_json::from_slice(&out.stdout).map_err(|e| format!("Cannot list apps: {e}"))?;
+        let names: Vec<&str> = apps.iter().map(|a| a.name.as_str()).collect();
+        let app = &apps[best_match(&names, &name).ok_or_else(|| format!("No app named \"{name}\" in the Start menu."))?];
+        let exe = app.app_id.rsplit('\\').next().unwrap_or_default();
+        if desktop::blocked(&name) || desktop::blocked(&app.name) || desktop::blocked(exe) {
+            return Err(format!("{} is a terminal or system tool. Ottoman is not allowed to open or control it; tell the user to do this themselves.", app.name));
+        }
+        Command::new("explorer")
+            .arg(format!("shell:AppsFolder\\{}", app.app_id))
+            .spawn()
+            .map_err(|e| format!("Failed to open {}: {e}", app.name))?;
+        Ok(app.name.clone())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -340,6 +439,7 @@ pub fn run() {
         )
         .setup(move |app| {
             // OTTOMAN_RELAY_TOKEN lets the end-to-end test reach the relay; normally a fresh random token per run.
+            app.manage(desktop::Desktop::start());
             app.manage(relay::start(std::env::var("OTTOMAN_RELAY_TOKEN").unwrap_or_else(|_| random_token())));
             app.global_shortcut().register(talk)?;
             let show = MenuItem::with_id(app, "show", "Show Ottoman", true, None::<&str>)?;
@@ -369,14 +469,52 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_config, chrome_profiles, connect_chrome, open_tab, resolve_upload, save_image, capture_desktop, copy_file_to_clipboard, list_saved, extension_status, relay_url, start_chrome, chrome_is_running])
+        .invoke_handler(tauri::generate_handler![get_config, chrome_profiles, connect_chrome, open_tab, resolve_upload, save_image, capture_desktop, open_app, close_app, desktop::app_snapshot, desktop::app_click, desktop::app_type, desktop::app_key, desktop::app_focused, desktop::app_scroll, desktop::app_capture, desktop::app_click_at, copy_file_to_clipboard, list_saved, extension_status, relay_url, start_chrome, chrome_is_running])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_in;
+    use super::{best_match, desktop, resolve_in};
+
+    #[test]
+    fn blocks_terminals_and_system_tools_only() {
+        for name in ["cmd.exe", "WindowsTerminal.exe", "Windows PowerShell", "PowerShell 7 (x64)", "Command Prompt", "Registry Editor", "Task Manager", "pwsh"] {
+            assert!(desktop::blocked(name), "{name}");
+        }
+        for name in ["Calculator", "Notepad", "notepad.exe", "CalculatorApp.exe", "ApplicationFrameHost.exe", "Spotify", "cmdline-tool"] {
+            assert!(!desktop::blocked(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn parses_key_combos() {
+        assert_eq!(desktop::parse_key("Control+Shift+S").unwrap(), vec![0x11, 0x10, b'S' as u16]);
+        assert_eq!(desktop::parse_key("Enter").unwrap(), vec![0x0D]);
+        assert_eq!(desktop::parse_key("Alt+F4").unwrap(), vec![0x12, 0x73]);
+        assert_eq!(desktop::parse_key("ctrl+a").unwrap(), vec![0x11, b'A' as u16]);
+        assert!(desktop::parse_key("Hyper+A").is_err());
+        assert!(desktop::parse_key("").is_err());
+    }
+
+    #[test]
+    fn grid_maps_onto_square_padded_window() {
+        // 800x400 window at (100, 50): the grid spans 800x800, so y=500 is the bottom padding.
+        assert_eq!(desktop::grid_to_screen((100, 50, 800, 400), 500.0, 250.0).unwrap(), (500, 250));
+        assert!(desktop::grid_to_screen((100, 50, 800, 400), 500.0, 600.0).is_err());
+    }
+
+    #[test]
+    fn best_match_prefers_exact_then_prefix_then_substring() {
+        let names = ["Notepad++", "Windows Notepad", "Notepad"];
+        assert_eq!(best_match(&names, "notepad"), Some(2));
+        assert_eq!(best_match(&names, "NOTEPAD+"), Some(0));
+        assert_eq!(best_match(&names, "windows"), Some(1));
+        assert_eq!(best_match(&names, "pad"), Some(0));
+        assert_eq!(best_match(&names, "calc"), None);
+        assert_eq!(best_match(&names, "  "), None);
+    }
 
     #[test]
     fn resolve_in_stays_inside_the_folder() {
