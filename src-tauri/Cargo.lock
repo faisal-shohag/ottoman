@@ -3061,6 +3061,7 @@ dependencies = [
  "tauri-plugin-websocket",
  "tokio",
  "tokio-tungstenite 0.30.0",
+ "windows",
  "xcap",
 ]
 
